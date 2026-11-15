@@ -49,6 +49,11 @@ namespace VolumetricClouds
 
         void ActivateInternal();
 
+        //! Пересоздаёт выходные текстуры при изменении размера вьюпорта
+        //! и ставит проходы облаков в очередь на перестройку.
+        void ResizeOutputAttachmentsIfNeeded();
+        void CreateOutputAttachments();
+
         AZ::Data::Instance<AZ::RPI::AttachmentImage> CreateCloudscapeOutputAttachment(const AZ::Name& attachmentName
             , const AzFramework::WindowSize attachmentSize) const;
 
@@ -99,5 +104,9 @@ namespace VolumetricClouds
         ////////////////////////////////////////////////////
 
         AzFramework::WindowSize m_viewportSize{0,0};
+
+        // Входит в имя текстур: новое вложение не совпадает по имени
+        // со старым, которое конвейер ещё держит до конца кадра.
+        uint32_t m_attachmentGeneration = 0;
     };
 } // namespace VolumetricClouds

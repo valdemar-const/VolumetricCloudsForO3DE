@@ -471,23 +471,10 @@ namespace VolumetricClouds
         //! RPI::ViewportContextIdNotificationBus
         void CloudscapeComponentController::OnViewportSizeChanged([[maybe_unused]] AzFramework::WindowSize size)
         {
-            // The feature processor owns two image attachments that are used
-            // by the passes it owns. Their sizes must be of the size of the viewport.
-            // Once attachments are defined for a pass they can not be modified (making those changes
-            // is not supported by the APIs at the moment). So we have to reschedule the destruction of this feature processor
-            // and recreate this feature processor which in turns will recreate and add the passes
-            // to the render pipeline.
-            m_scene->DisableFeatureProcessor<CloudscapeFeatureProcessor>();
-            m_cloudscapeFeatureProcessor = nullptr;
-
-            // Recreate the feature processor on the next tick.
-            auto recreateFeatureProcessorFunc = [this]()
-            {
-                EnableFeatureProcessor();
-                SubmitShaderConstantData();
-            };
-            AZ::TickBus::QueueFunction(AZStd::move(recreateFeatureProcessorFunc));
-
+            // Feature processor сам пересоздаёт текстуры по размеру вьюпорта
+            // в Simulate. Пересоздание всего feature processor здесь ломало
+            // облака: новые проходы получают имена старых, которые ещё стоят
+            // в очереди на удаление, и поиск прохода по имени находит старый.
         }
 
         /////////////////////////////////////////////////////////

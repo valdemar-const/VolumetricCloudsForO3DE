@@ -66,6 +66,8 @@ namespace VolumetricClouds
 
     void CloudscapeFeatureProcessor::Simulate(const SimulatePacket&)
     {
+        ResizeOutputAttachmentsIfNeeded();
+
         if (m_cloudscapeComputePass)
         {
             m_cloudscapeComputePass->UpdateFrameCounter(m_frameCounter);
@@ -115,6 +117,10 @@ namespace VolumetricClouds
                 return;
             }
             m_cloudscapeReprojectionPass->SetTargetThreadCounts(m_viewportSize.m_width, m_viewportSize.m_height, 1);
+            // Проход отключён: вычислительный проход марширует все пиксели
+            // каждый кадр, а репроекция переписывает 15 пикселей из 16
+            // данными прошлого кадра и даёт сетку точек и шлейф за самолётом.
+            m_cloudscapeReprojectionPass->SetEnabled(false);
         }
 
 
@@ -159,21 +165,67 @@ namespace VolumetricClouds
         auto viewportContext = viewportContextInterface->GetViewportContextByScene(GetParentScene());
         m_viewportSize = viewportContext->GetViewportSize();
 
-        m_cloudOutput0 = CreateCloudscapeOutputAttachment(AZ::Name("CloudscapeOutput0"), m_viewportSize);
-        AZ_Assert(!!m_cloudOutput0, "Failed to create CloudscapeOutput0");
-        m_cloudOutput1 = CreateCloudscapeOutputAttachment(AZ::Name("CloudscapeOutput1"), m_viewportSize);
-        AZ_Assert(!!m_cloudOutput1, "Failed to create CloudscapeOutput1");
+        CreateOutputAttachments();
 
         DisableSceneNotification();
         EnableSceneNotification();
+    }
+
+    void CloudscapeFeatureProcessor::CreateOutputAttachments()
+    {
+        const AZStd::string name0 = AZStd::string::format("CloudscapeOutput0_%u", m_attachmentGeneration);
+        const AZStd::string name1 = AZStd::string::format("CloudscapeOutput1_%u", m_attachmentGeneration);
+        m_cloudOutput0 = CreateCloudscapeOutputAttachment(AZ::Name(name0), m_viewportSize);
+        AZ_Assert(!!m_cloudOutput0, "Failed to create %s", name0.c_str());
+        m_cloudOutput1 = CreateCloudscapeOutputAttachment(AZ::Name(name1), m_viewportSize);
+        AZ_Assert(!!m_cloudOutput1, "Failed to create %s", name1.c_str());
+    }
+
+    void CloudscapeFeatureProcessor::ResizeOutputAttachmentsIfNeeded()
+    {
+        auto viewportContextInterface = AZ::Interface<AZ::RPI::ViewportContextRequestsInterface>::Get();
+        auto viewportContext = viewportContextInterface ? viewportContextInterface->GetViewportContextByScene(GetParentScene()) : nullptr;
+        if (!viewportContext)
+        {
+            return;
+        }
+
+        const AzFramework::WindowSize size = viewportContext->GetViewportSize();
+        if (size.m_width == 0 || size.m_height == 0 ||
+            (size.m_width == m_viewportSize.m_width && size.m_height == m_viewportSize.m_height))
+        {
+            return;
+        }
+
+        m_viewportSize = size;
+        ++m_attachmentGeneration;
+        CreateOutputAttachments();
+
+        // Привязку текстур к слотам выполняет BuildInternal вычислительного
+        // прохода; остальные проходы получают текстуры через соединения слотов.
+        if (m_cloudscapeComputePass)
+        {
+            m_cloudscapeComputePass->QueueForBuildAndInitialization();
+        }
+        if (m_cloudscapeReprojectionPass)
+        {
+            m_cloudscapeReprojectionPass->SetTargetThreadCounts(m_viewportSize.m_width, m_viewportSize.m_height, 1);
+            m_cloudscapeReprojectionPass->QueueForBuildAndInitialization();
+        }
+        if (m_cloudscapeRenderPass)
+        {
+            m_cloudscapeRenderPass->QueueForBuildAndInitialization();
+        }
     }
 
 
     AZ::Data::Instance<AZ::RPI::AttachmentImage> CloudscapeFeatureProcessor::CreateCloudscapeOutputAttachment(const AZ::Name& attachmentName
         , const AzFramework::WindowSize attachmentSize) const
     {
+        // Яркость освещённого солнцем облака превышает 1.0; формат UNORM
+        // обрезает её и даёт полосы на градиентах.
         AZ::RHI::ImageDescriptor imageDesc = AZ::RHI::ImageDescriptor::Create2D(
-            AZ::RHI::ImageBindFlags::ShaderReadWrite, attachmentSize.m_width, attachmentSize.m_height, AZ::RHI::Format::R8G8B8A8_UNORM);
+            AZ::RHI::ImageBindFlags::ShaderReadWrite, attachmentSize.m_width, attachmentSize.m_height, AZ::RHI::Format::R16G16B16A16_FLOAT);
         AZ::RHI::ClearValue clearValue = AZ::RHI::ClearValue::CreateVector4Float(0, 0, 0, 0);
         AZ::Data::Instance<AZ::RPI::AttachmentImagePool> pool = AZ::RPI::ImageSystemInterface::Get()->GetSystemAttachmentPool();
         return AZ::RPI::AttachmentImage::Create(*pool.get(), imageDesc, attachmentName, &clearValue, nullptr);
