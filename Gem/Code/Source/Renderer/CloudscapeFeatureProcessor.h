@@ -55,11 +55,12 @@ namespace VolumetricClouds
         void CreateOutputAttachments();
 
         AZ::Data::Instance<AZ::RPI::AttachmentImage> CreateCloudscapeOutputAttachment(const AZ::Name& attachmentName
-            , const AzFramework::WindowSize attachmentSize) const;
+            , const AzFramework::WindowSize attachmentSize, AZ::RHI::Format format) const;
 
         // Call by the passes owned by this feature processor.
         AZ::Data::Instance<AZ::RPI::AttachmentImage> GetOutput0ImageAttachment() { return m_cloudOutput0; }
         AZ::Data::Instance<AZ::RPI::AttachmentImage> GetOutput1ImageAttachment() { return m_cloudOutput1; }
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> GetTraceImageAttachment() { return m_cloudTrace; }
 
         //////////////////////////////////////////////////////////////////
         //! AZ::RPI::FeatureProcessor overrides START...
@@ -79,6 +80,8 @@ namespace VolumetricClouds
         // in cloudscape rendering these attachments become "Imported" attachments.
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudOutput0;
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudOutput1;
+        // Сэмплы марша: один на блок 4x4 пикселей.
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudTrace;
 
         // We need a copy of the previous frame depth buffer, because we reproject 15/16 pixels each frame.
         // This causes visible artifacts at the borders of moving objects. The solution is that if

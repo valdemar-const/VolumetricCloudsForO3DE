@@ -33,6 +33,12 @@
                     "ShaderInputName": "m_cloudscapeTexture", //"NoBind" 
                     "ShaderInputArrayIndex": "1"
                 },
+                {
+                    "Name": "Trace",
+                    "SlotType": "Input",
+                    "ScopeAttachmentUsage": "Shader",
+                    "ShaderInputName": "m_cloudTrace"
+                },
                 //Output
                 {
                     "Name": "ColorOutput",

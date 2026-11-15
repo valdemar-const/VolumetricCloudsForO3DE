@@ -4,7 +4,7 @@
     "ClassName": "PassAsset",
     "ClassData": {
         "PassTemplate": {
-            "Name": "CloudscapeComputePassTemplate",
+            "Name": "CloudscapeReprojectionComputePassTemplate",
             "PassClass": "ComputePass",
             "Slots": [
                 //Input
@@ -33,6 +33,12 @@
                     "ScopeAttachmentUsage": "Shader",
                     "ShaderInputName": "m_cloudscapeTexture", //"NoBind" 
                     "ShaderInputArrayIndex": "1"
+                },
+                {
+                    "Name": "Trace",
+                    "SlotType": "Input",
+                    "ScopeAttachmentUsage": "Shader",
+                    "ShaderInputName": "m_cloudTrace"
                 }
             ],
             "PassData": {

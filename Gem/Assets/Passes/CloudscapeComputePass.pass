@@ -35,6 +35,12 @@
                     "ScopeAttachmentUsage": "Shader",
                     "ShaderInputName": "NoBind", //"m_cloudscapeOut",
                     "ShaderInputArrayIndex": "1"
+                },
+                {
+                    "Name": "Output2",
+                    "SlotType": "InputOutput",
+                    "ScopeAttachmentUsage": "Shader",
+                    "ShaderInputName": "NoBind"
                 }
             ],
             "PassData": {

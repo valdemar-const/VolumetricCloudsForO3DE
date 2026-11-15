@@ -117,10 +117,6 @@ namespace VolumetricClouds
                 return;
             }
             m_cloudscapeReprojectionPass->SetTargetThreadCounts(m_viewportSize.m_width, m_viewportSize.m_height, 1);
-            // Проход отключён: вычислительный проход марширует все пиксели
-            // каждый кадр, а репроекция переписывает 15 пикселей из 16
-            // данными прошлого кадра и даёт сетку точек и шлейф за самолётом.
-            m_cloudscapeReprojectionPass->SetEnabled(false);
         }
 
 
@@ -175,10 +171,16 @@ namespace VolumetricClouds
     {
         const AZStd::string name0 = AZStd::string::format("CloudscapeOutput0_%u", m_attachmentGeneration);
         const AZStd::string name1 = AZStd::string::format("CloudscapeOutput1_%u", m_attachmentGeneration);
-        m_cloudOutput0 = CreateCloudscapeOutputAttachment(AZ::Name(name0), m_viewportSize);
+        m_cloudOutput0 = CreateCloudscapeOutputAttachment(AZ::Name(name0), m_viewportSize, AZ::RHI::Format::R16G16B16A16_FLOAT);
         AZ_Assert(!!m_cloudOutput0, "Failed to create %s", name0.c_str());
-        m_cloudOutput1 = CreateCloudscapeOutputAttachment(AZ::Name(name1), m_viewportSize);
+        m_cloudOutput1 = CreateCloudscapeOutputAttachment(AZ::Name(name1), m_viewportSize, AZ::RHI::Format::R16G16B16A16_FLOAT);
         AZ_Assert(!!m_cloudOutput1, "Failed to create %s", name1.c_str());
+
+        // Цвет и глубины упакованы в half: CloudscapeCommon.azsli PackCloudTrace.
+        const AZStd::string traceName = AZStd::string::format("CloudscapeTrace_%u", m_attachmentGeneration);
+        const AzFramework::WindowSize traceSize{ (m_viewportSize.m_width + 3) / 4, (m_viewportSize.m_height + 3) / 4 };
+        m_cloudTrace = CreateCloudscapeOutputAttachment(AZ::Name(traceName), traceSize, AZ::RHI::Format::R32G32B32A32_UINT);
+        AZ_Assert(!!m_cloudTrace, "Failed to create %s", traceName.c_str());
     }
 
     void CloudscapeFeatureProcessor::ResizeOutputAttachmentsIfNeeded()
@@ -220,12 +222,12 @@ namespace VolumetricClouds
 
 
     AZ::Data::Instance<AZ::RPI::AttachmentImage> CloudscapeFeatureProcessor::CreateCloudscapeOutputAttachment(const AZ::Name& attachmentName
-        , const AzFramework::WindowSize attachmentSize) const
+        , const AzFramework::WindowSize attachmentSize, AZ::RHI::Format format) const
     {
         // Яркость освещённого солнцем облака превышает 1.0; формат UNORM
         // обрезает её и даёт полосы на градиентах.
         AZ::RHI::ImageDescriptor imageDesc = AZ::RHI::ImageDescriptor::Create2D(
-            AZ::RHI::ImageBindFlags::ShaderReadWrite, attachmentSize.m_width, attachmentSize.m_height, AZ::RHI::Format::R16G16B16A16_FLOAT);
+            AZ::RHI::ImageBindFlags::ShaderReadWrite, attachmentSize.m_width, attachmentSize.m_height, format);
         AZ::RHI::ClearValue clearValue = AZ::RHI::ClearValue::CreateVector4Float(0, 0, 0, 0);
         AZ::Data::Instance<AZ::RPI::AttachmentImagePool> pool = AZ::RPI::ImageSystemInterface::Get()->GetSystemAttachmentPool();
         return AZ::RPI::AttachmentImage::Create(*pool.get(), imageDesc, attachmentName, &clearValue, nullptr);

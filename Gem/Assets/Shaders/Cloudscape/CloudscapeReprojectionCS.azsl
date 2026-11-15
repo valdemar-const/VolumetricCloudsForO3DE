@@ -15,151 +15,133 @@
 
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
-    // A number from 0 .. 15. Defines the pixel index
-    // within each 4x4 block that will be ray marched in this frame. 
+    // Номер кадра 0..15: задаёт пиксель марша в блоке 4x4 и чётность
+    // текстуры истории.
     uint m_pixelIndex4x4;
 
-    // We write to only one of these two textures every other frame.
+    // История: текстуру m_pixelIndex4x4 % 2 пишут, другую читают.
     RWTexture2D<float4> m_cloudscapeTexture[2];
-    
+
+    Texture2D<uint4> m_cloudTrace;
+
     Texture2D<float2> m_depthStencilTexture;
-
-    uint GetOutputTextureIndex()
-    {
-        return (uint)fmod(m_pixelIndex4x4, 2);
-    }
-
-    // This helper function calculates the corresponding
-    // XY location within a 4x4 block of pixels.
-    uint2 GetPixelBlockXY()
-    {
-        const uint pixelIndex4x4 = GetTransformed4x4PixelIndex(m_pixelIndex4x4);
-        const uint rowIdx = pixelIndex4x4 >> 2;
-        const uint colIdx = pixelIndex4x4 - (rowIdx << 2);
-        return uint2(colIdx, rowIdx);
-    }
-
-    bool IsRayMarchedPixel(uint2 pixelLoc)
-    {
-        // 1280 x 720
-        // 1280 / 4 = 320
-        // 720 / 4 = 180
-
-        // 323 x 72
-        // 323 / 4 = 80.75
-        //    80 * 4 = 320. ModX = 3
-        // 72 / 4 = 18
-        //    18 * 4 = 72. ModY = 0
-        // pixelIndex4x4 = ModY * 4 + ModX = 0 * 4 + 3 = 3
-
-        // 323 x 74
-        // 323 / 4 = 80.75
-        //    80 * 4 = 320  . ModX = 3
-        // 74 / 4 = 18.5
-        //    18 * 4 = 72. ModY = 2
-        // pixelIndex4x4 = ModY * 4 + ModX = 2 * 4 + 3 = 11
-
-        //     320, 321, 322, 323
-        //  72   0    1    2    3
-        //  73   4    5    6    7
-        //  74   8    9   10   11
-        //  75  12   13   14   15  
-
-        const uint blockX = pixelLoc.x >> 2;
-        const uint modX = pixelLoc.x - (blockX * 4);
-        const uint blockY = pixelLoc.y >> 2;
-        const uint modY = pixelLoc.y - (blockY * 4);
-
-        const uint pixelIndex4x4 = modY * 4 + modX;
-        const uint transformedPixelIndex4x4 = GetTransformed4x4PixelIndex(m_pixelIndex4x4);
-        
-        return pixelIndex4x4 == transformedPixelIndex4x4;
-    }
-
-
-    uint2 GetRayMarchedPixelLocation(uint2 pixelLoc)
-    {
-        const uint blockX = pixelLoc.x >> 2;
-        const uint blockY = pixelLoc.y >> 2;
-        return uint2(blockX << 2, blockY << 2) + GetPixelBlockXY();
-    }
-
-
-    // Returns true if the previous pixel location is within @screenDims bounds
-    // AND the current pixel location is cloud visible.
-    bool GetReprojectedPixelLoc(uint2 pixelLoc, uint2 screenDims, inout uint2 prevPixelLocOut)
-    {
-        // Get the current clipSpace position.
-        const float2 pixelUV = float2(pixelLoc)/float2(screenDims);
-        const float zDepth = m_depthStencilTexture.Load(uint3(pixelLoc, 0)).r;
-        const float3 pixelPosWS = WorldPositionFromDepthBuffer(pixelUV, zDepth).xyz;
-
-        // Use the previous camera view-projection matrix to calculate screen pixel from
-        // world position.
-        const float4 clipPosPrev = mul(ViewSrg::m_viewProjectionPrevMatrix, float4(pixelPosWS, 1.0));
-        const float3 ndcPosPrev = clipPosPrev.xyz / clipPosPrev.w;
-        float2 uvPrev = (ndcPosPrev.xy + float2(1.0, -1.0)) * float2(0.5, -0.5);
-        const float2 prevPixLoc = float2(screenDims) * uvPrev + float2(0.5, 0.5);
-
-        prevPixelLocOut.x = clamp(prevPixLoc.x, 0, screenDims.x - 1);
-        prevPixelLocOut.y = clamp(prevPixLoc.y, 0, screenDims.y - 1);
-
-        const bool isInBounds = (prevPixLoc.x >= 0.0) && (prevPixLoc.x < screenDims.x) &&
-               (prevPixLoc.y >= 0.0) && (prevPixLoc.y < screenDims.y);
-        return isInBounds && (zDepth == 0.00);
-    }
-
 }
 
+// Доля нового сэмпла для пикселя марша. Меньшее значение сильнее
+// усредняет сдвиг старта луча, но дольше тянет шлейф при движении.
+static const float TracedPixelBlend = 0.3;
+// Доля интерполированного сэмпла для остальных пикселей блока.
+static const float UpsampledPixelBlend = 0.05;
 
-// Unlike CloudscapeCS.azsl, this compute shader is invoked with as many
-// threads as the width and height of the image.
-// This means the first thing we must do is calculate if for this thread,
-// the pixel coordinate is the 1/16 that was actually raymarched by CloudscapeCS.azsl.
-// If it was raymarched we return early. For all other 15 pixels we do the actually reprojection
-// and copy pixel colors from the previous frame into the current frame.
-// Remark about thread_id and pixel location...
-// Each Thread is invoked to write to 1 out of 16 pixels (0..15)
-// in 4x4 block.
-// For example imagine the UAV is of size 1280x720.
-// The Dispatch call would be (1280/8, 720/8, 1) = (160, 90, 1)
-// But further more, the total required number of Thread Groups should be
-// (160/4, 90/4, 1) = (40, 22.5, 1) = (40, 23, 1)
-// So, in the end we have to multiply SV_DispatchThreadID.xy * 4 + f 
+float4 LoadTraceColor(int2 traceLoc, int2 traceDims)
+{
+    const int2 loc = clamp(traceLoc, int2(0, 0), traceDims - 1);
+    return UnpackCloudTrace(PassSrg::m_cloudTrace.Load(int3(loc, 0))).m_color;
+}
+
+float4 LoadHistory(uint index, int2 loc, int2 dims)
+{
+    return PassSrg::m_cloudscapeTexture[index][clamp(loc, int2(0, 0), dims - 1)];
+}
+
+// RW-текстуру нельзя читать сэмплером, поэтому фильтр собирают вручную.
+float4 SampleHistoryBilinear(uint index, float2 pixelPos, int2 dims)
+{
+    const float2 p = pixelPos - 0.5;
+    const int2 i = int2(floor(p));
+    const float2 f = p - float2(i);
+    const float4 c00 = LoadHistory(index, i, dims);
+    const float4 c10 = LoadHistory(index, i + int2(1, 0), dims);
+    const float4 c01 = LoadHistory(index, i + int2(0, 1), dims);
+    const float4 c11 = LoadHistory(index, i + int2(1, 1), dims);
+    return lerp(lerp(c00, c10, f.x), lerp(c01, c11, f.x), f.y);
+}
+
 [numthreads(8, 8, 1)]
 void MainCS(uint3 thread_id: SV_DispatchThreadID)
 {
-    uint2 pixelLoc = thread_id.xy;
+    const int2 pixelLoc = int2(thread_id.xy);
 
-    // Do nothing if we are outside the target texture dimensions.
-    // This only happens when the render target size is not an exact multiple
-    // of 8x8 (Thread Group Size)
-    uint2 texDims;
-    PassSrg::m_cloudscapeTexture[0].GetDimensions(texDims.x, texDims.y);
+    uint2 texDimsU;
+    PassSrg::m_cloudscapeTexture[0].GetDimensions(texDimsU.x, texDimsU.y);
+    const int2 texDims = int2(texDimsU);
     if ((pixelLoc.x >= texDims.x) || (pixelLoc.y >= texDims.y))
     {
         return;
     }
 
-    // Determine if this is the raymarched pixel.
-    if (PassSrg::IsRayMarchedPixel(pixelLoc))
+    uint2 traceDimsU;
+    PassSrg::m_cloudTrace.GetDimensions(traceDimsU.x, traceDimsU.y);
+    const int2 traceDims = int2(traceDimsU);
+
+    const uint currentIndex = PassSrg::m_pixelIndex4x4 & 1;
+    const uint previousIndex = 1 - currentIndex;
+
+    const int2 tracedOffset = int2(GetTracedOffsetInBlock(PassSrg::m_pixelIndex4x4));
+    const int2 blockLoc = min(pixelLoc >> 2, traceDims - 1);
+    const bool isTracedPixel = all(pixelLoc == blockLoc * 4 + tracedOffset);
+
+    const CloudTraceSample center = UnpackCloudTrace(PassSrg::m_cloudTrace.Load(int3(blockLoc, 0)));
+
+    // Границы значений истории: сэмплы этого кадра в блоках 3x3.
+    float4 minColor = center.m_color;
+    float4 maxColor = center.m_color;
+    [unroll] for (int y = -1; y <= 1; ++y)
     {
-        return;
+        [unroll] for (int x = -1; x <= 1; ++x)
+        {
+            const float4 c = LoadTraceColor(blockLoc + int2(x, y), traceDims);
+            minColor = min(minColor, c);
+            maxColor = max(maxColor, c);
+        }
     }
 
-    const uint currentTexIndex = PassSrg::GetOutputTextureIndex();
-    uint previousTexIndex = 1 - currentTexIndex;
-    
-    // The moment of truth, reprojection.
-    uint2 prevPixelLoc = 0 ;
-    if (!PassSrg::GetReprojectedPixelLoc(pixelLoc, texDims, prevPixelLoc))
+    // Интерполяция сэмплов этого кадра в точке пикселя: сэмпл блока
+    // лежит в пикселе blockLoc * 4 + tracedOffset.
+    const float2 tracePos = (float2(pixelLoc - tracedOffset)) / 4.0;
+    const int2 t0 = int2(floor(tracePos));
+    const float2 tf = tracePos - float2(t0);
+    const float4 upsampled = lerp(
+        lerp(LoadTraceColor(t0, traceDims), LoadTraceColor(t0 + int2(1, 0), traceDims), tf.x),
+        lerp(LoadTraceColor(t0 + int2(0, 1), traceDims), LoadTraceColor(t0 + int2(1, 1), traceDims), tf.x),
+        tf.y);
+
+    // Перенос истории: точка облака на средней глубине по пропусканию.
+    // Без облака глубина 1000 км: перенос почти по одному направлению.
+    const float2 pixelUV = (float2(pixelLoc) + 0.5) / float2(texDims);
+    const float3 farPosWS = WorldPositionFromDepthBuffer(pixelUV, 0.0).xyz;
+    const float3 rayDirection = normalize(farPosWS - ViewSrg::m_worldPosition);
+    const float3 cloudPosWS = ViewSrg::m_worldPosition + rayDirection * (center.m_meanDepthKm * 1000.0);
+
+    const float4 clipPosPrev = mul(ViewSrg::m_viewProjectionPrevMatrix, float4(cloudPosWS, 1.0));
+    const float2 ndcPrev = clipPosPrev.xy / clipPosPrev.w;
+    const float2 uvPrev = ndcPrev * float2(0.5, -0.5) + 0.5;
+    const float2 pixelPosPrev = uvPrev * float2(texDims);
+
+    bool isHistoryValid = (clipPosPrev.w > 0.0) &&
+        all(pixelPosPrev >= 0.0) && all(pixelPosPrev < float2(texDims));
+
+    float4 history = 0.0;
+    if (isHistoryValid)
     {
-        // Either the previous pixel location is out of bounds or the current pixel is blocked
-        // by an object.
-        prevPixelLoc = PassSrg::GetRayMarchedPixelLocation(pixelLoc);
-        previousTexIndex = currentTexIndex;
+        history = SampleHistoryBilinear(previousIndex, pixelPosPrev, texDims);
+        // Текстура после создания содержит произвольные данные.
+        isHistoryValid = all(isfinite(history));
     }
 
-    PassSrg::m_cloudscapeTexture[currentTexIndex][pixelLoc] = PassSrg::m_cloudscapeTexture[previousTexIndex][prevPixelLoc];
-} 
+    float4 result;
+    if (isTracedPixel)
+    {
+        result = isHistoryValid
+            ? lerp(clamp(history, minColor, maxColor), center.m_color, TracedPixelBlend)
+            : center.m_color;
+    }
+    else
+    {
+        result = isHistoryValid
+            ? lerp(clamp(history, minColor, maxColor), upsampled, UpsampledPixelBlend)
+            : upsampled;
+    }
 
+    PassSrg::m_cloudscapeTexture[currentIndex][pixelLoc] = result;
+}

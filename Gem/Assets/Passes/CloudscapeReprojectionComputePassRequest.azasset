@@ -15,6 +15,13 @@
                     "Attachment": "Depth"
                 }
             },
+            {
+                "LocalSlot": "Trace",
+                "AttachmentRef": {
+                    "Pass": "CloudscapeComputePass",
+                    "Attachment": "Output2"
+                }
+            },
             // Input/Output
             {
                 "LocalSlot": "Cloudscape0",

@@ -29,6 +29,13 @@
                     "Attachment": "Cloudscape1"
                 }
             },
+            {
+                "LocalSlot": "Trace",
+                "AttachmentRef": {
+                    "Pass": "CloudscapeComputePass",
+                    "Attachment": "Output2"
+                }
+            },
             // Outputs
             {
                 "LocalSlot": "ColorOutput",

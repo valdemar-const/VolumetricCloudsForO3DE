@@ -63,7 +63,7 @@ namespace VolumetricClouds
         // harmless AZ::Errors related with the shaders m_cloudscapeOut[]
         // array binding. The bindings are actually known at runtime and not during
         // AZ::RPI::RenderPass::InitializeInternal().
-        binding->m_shaderInputName = AZ::Name("m_cloudscapeOut");
+        binding->m_shaderInputName = AZ::Name(attachmentIndex < 2 ? "m_cloudscapeOut" : "m_cloudTraceOut");
 
         AZ::RHI::ImageViewDescriptor viewDesc = AZ::RHI::ImageViewDescriptor::Create(attachmentImage->GetDescriptor().m_format,
             0, 0);
@@ -87,17 +87,12 @@ namespace VolumetricClouds
         // Bind the first attachment
         SetImageAttachmentBinding(0, output0ImageAttachment);
         SetImageAttachmentBinding(1, cloudscapeFeatureProcessor->GetOutput1ImageAttachment());
+        const auto traceImageAttachment = cloudscapeFeatureProcessor->GetTraceImageAttachment();
+        SetImageAttachmentBinding(2, traceImageAttachment);
 
-        const auto attachmentSize = output0ImageAttachment->GetDescriptor().m_size;
-
-        // Full march: every pixel of the cloudscape texture is ray marched
-        // every frame. The 1-of-16-pixels-per-frame scheme requires a working
-        // temporal reprojection pass to fill the remaining 15 pixels, and that
-        // pass is not wired up yet; without it the frame keeps stale pixels.
-        const auto totalThreadsX = attachmentSize.m_width;
-        const auto totalThreadsY = attachmentSize.m_height;
-
-        SetTargetThreadCounts(totalThreadsX, totalThreadsY, 1);
+        // Один поток на блок 4x4: остальные пиксели заполняет проход репроекции.
+        const auto traceSize = traceImageAttachment->GetDescriptor().m_size;
+        SetTargetThreadCounts(traceSize.m_width, traceSize.m_height, 1);
     }
 
     // void CloudscapeComputePass::FrameBeginInternal(FramePrepareParams params)

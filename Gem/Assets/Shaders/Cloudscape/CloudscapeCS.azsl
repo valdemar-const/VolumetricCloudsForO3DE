@@ -143,6 +143,9 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     // We write to only one of these two textures every other frame.
     RWTexture2D<float4> m_cloudscapeOut[2];
 
+    // Четверть разрешения: один сэмпл на блок 4x4.
+    RWTexture2D<uint4> m_cloudTraceOut;
+
     uint GetOutputTextureIndex()
     {
         // FIXME: For now always texture 0 until we add reprojection pass.
@@ -501,8 +504,7 @@ float2 RaySphereHits(float3 rayOrigin, float3 rayDirection, float radius)
 // самолётом и за землёй не рисуют.
 bool GetCloudSlabIntersections(const float2 pixUV, inout AtmosphereIntersectionInfo intersectionResults, inout bool isCloudPixelBlocked)
 {
-    const float zDepth = PassSrg::m_depthStencilTexture.SampleLevel(PassSrg::ClampPointSampler, pixUV, 0).r;
-    const float3 pixelPosWS = WorldPositionFromDepthBuffer(pixUV, zDepth).xyz;
+    const float3 pixelPosWS = WorldPositionFromDepthBuffer(pixUV, 0.0).xyz;
     const float3 pixelViewVec = pixelPosWS - ViewSrg::m_worldPosition;
     const float distanceToPixel = length(pixelViewVec);
     const float3 rayDirection = pixelViewVec / distanceToPixel;
@@ -545,13 +547,10 @@ bool GetCloudSlabIntersections(const float2 pixUV, inout AtmosphereIntersectionI
         tEnd = (innerHits.x > 0.0) ? innerHits.x : outerHits.y;
     }
 
-    // ViewSrg::GetNearZ() возвращает дальнюю плоскость: O3DE применяет обратную глубину.
-    const float farZ = ViewSrg::GetNearZ();
+    // Глубиной сцены марш не обрезают: один пиксель марша представляет
+    // блок 4x4, и край самолёта в блоке обрезал бы облака соседних пикселей.
+    // Облако за геометрией отсекает растровый проход по передней глубине.
     isCloudPixelBlocked = false;
-    if (distanceToPixel < farZ)
-    {
-        tEnd = min(tEnd, distanceToPixel * 0.001);
-    }
     if (tEnd <= tStart)
     {
         isCloudPixelBlocked = true;
@@ -581,15 +580,19 @@ float GetJitterOffset(float2 screenLocation)
 // With low transmittance we'd have opaque clouds.
 // With high transmittance we'd have transparent clouds and we'd see
 // only the existing pixel color of the Render Target RT.
-float4 GetCloudColor(const float2 pixUV, const float2 pixLoc)
+CloudTraceSample GetCloudColor(const float2 pixUV, const float2 pixLoc)
 {
     // To avoid ghosting issues related with reprojection we will ray march the pixel
     // even if it is not visible. But we will ray march it with less steps.
     bool isCloudPixelBlocked = false;
     AtmosphereIntersectionInfo interInfo;
+    CloudTraceSample result;
+    result.m_color = 0.0;
+    result.m_frontDepthKm = 1000.0;
+    result.m_meanDepthKm = 1000.0;
     if (!GetCloudSlabIntersections(pixUV, interInfo, isCloudPixelBlocked))
     {
-        return 0.00;
+        return result;
     }
 
     // const bool wasCloudsPixelBlocked = PassSrg::m_prevFrameDepthTexture.SampleLevel(PassSrg::ClampPointSampler, pixUV, 0) != 0.0;
@@ -624,7 +627,12 @@ float4 GetCloudColor(const float2 pixUV, const float2 pixLoc)
     // Шесть шагов с удвоением покрывают 63 базовых шага, то есть треть толщины слоя.
     const float lightStepSizeKm = PassSrg::m_cloudSlabThicknessKm / (3.0 * 63.0);
 
-    const float jitter = GetJitterOffset(pixLoc) * 0.5 + 0.5;
+    // Сдвиг зависит от номера кадра: история усредняет разные позиции
+    // сэмплов, и полосы от сдвига не застывают на экране.
+    const float jitter = GetJitterOffset(pixLoc + 5.588238 * float(PassSrg::m_pixelIndex4x4)) * 0.5 + 0.5;
+    float frontDepthKm = -1.0;
+    float depthWeightedSumKm = 0.0;
+    float depthWeightSum = 0.0;
 
     float3 totalColor = float3(0.0, 0.0, 0.0);
     float totalTransmittance = 1.0;
@@ -696,6 +704,13 @@ float4 GetCloudColor(const float2 pixUV, const float2 pixLoc)
         // Энергосберегающее интегрирование по отрезку (Hillaire, Frostbite 2016).
         const float3 integScatt = (luminance - luminance * stepTransmittance) / eCoef;
         totalColor += totalTransmittance * integScatt;
+        const float depthWeight = totalTransmittance * (1.0 - stepTransmittance);
+        depthWeightedSumKm += depthWeight * (distanceToInnerSphereKm + sampleT);
+        depthWeightSum += depthWeight;
+        if (frontDepthKm < 0.0)
+        {
+            frontDepthKm = distanceToInnerSphereKm + sampleT;
+        }
         totalTransmittance *= stepTransmittance;
 
         if (totalTransmittance <= 0.01)
@@ -716,46 +731,36 @@ float4 GetCloudColor(const float2 pixUV, const float2 pixLoc)
     totalAlpha = lerp(totalAlpha, 0.0, fadeFraction);
     totalColor = lerp(totalColor, float3(0.0, 0.0, 0.0), fadeFraction);
 
-    return float4(totalColor, totalAlpha);//TransformColor(float3(1, 1, 1), ColorSpaceId::LinearSRGB, ColorSpaceId::ACEScg);
+    result.m_color = float4(totalColor, totalAlpha);
+    if (depthWeightSum > 0.0)
+    {
+        result.m_frontDepthKm = frontDepthKm;
+        result.m_meanDepthKm = depthWeightedSumKm / depthWeightSum;
+    }
+    return result;
 
 }
 
 
-// Remark about thread_id and pixel location...
-// Each Thread is invoked to write to 1 out of 16 pixels (0..15)
-// in 4x4 block.
-// For example imagine the UAV is of size 1280x720.
-// The Dispatch call would be (1280/8, 720/8, 1) = (160, 90, 1)
-// But further more, the total required number of Thread Groups should be
-// (160/4, 90/4, 1) = (40, 22.5, 1) = (40, 23, 1)
-// So, in the end we have to multiply SV_DispatchThreadID.xy * 4 + f 
+// Поток марширует один пиксель блока 4x4; положение пикселя в блоке
+// меняется по кадрам. Остальные 15 пикселей восстанавливает проход
+// CloudscapeReprojectionCS из истории.
 [numthreads(8, 8, 1)]
 void MainCS(uint3 thread_id: SV_DispatchThreadID)
 {
-    uint2 pixelLoc = thread_id.xy;
-
-    // Do nothing if we are outside the target texture dimensions.
-    uint2 texDims;
-    PassSrg::m_cloudscapeOut[0].GetDimensions(texDims.x, texDims.y);
-    if ((pixelLoc.x >= texDims.x) || (pixelLoc.y >= texDims.y))
+    const uint2 blockLoc = thread_id.xy;
+    uint2 traceDims;
+    PassSrg::m_cloudTraceOut.GetDimensions(traceDims.x, traceDims.y);
+    if ((blockLoc.x >= traceDims.x) || (blockLoc.y >= traceDims.y))
     {
         return;
     }
 
-    // // Determine if this is the raymarched pixel.
-    // if (!PassSrg::IsRayMarchedPixel(pixelLoc))
-    // {
-    //     // Not off-the-hook yet. If right now this cloud pixel is visible
-    //     // but in the previous frame it was covered, we need to fully render it
-    //     // to avoid the eye sore due to 1/16 pixel rendering.
-    //     //if (PassSrg::IsPixelVisible
-    //     return;
-    // }
+    uint2 texDims;
+    PassSrg::m_cloudscapeOut[0].GetDimensions(texDims.x, texDims.y);
+    const uint2 pixelLoc = min(blockLoc * 4 + GetTracedOffsetInBlock(PassSrg::m_pixelIndex4x4), texDims - 1);
 
-    float2 pixelLocF = float2(pixelLoc);
-    float2 pixelUV = (pixelLocF + 0.5) / float2(texDims);
-    float4 cloudColor = GetCloudColor(pixelUV, pixelLocF);
-    
-    uint pingPondIdx = PassSrg::GetOutputTextureIndex();
-    PassSrg::m_cloudscapeOut[pingPondIdx][pixelLoc] = cloudColor;
-}; 
+    const float2 pixelLocF = float2(pixelLoc);
+    const float2 pixelUV = (pixelLocF + 0.5) / float2(texDims);
+    PassSrg::m_cloudTraceOut[blockLoc] = PackCloudTrace(GetCloudColor(pixelUV, pixelLocF));
+}
