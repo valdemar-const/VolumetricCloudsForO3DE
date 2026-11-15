@@ -61,6 +61,12 @@ namespace VolumetricClouds
         AZ::Data::Instance<AZ::RPI::AttachmentImage> GetOutput0ImageAttachment() { return m_cloudOutput0; }
         AZ::Data::Instance<AZ::RPI::AttachmentImage> GetOutput1ImageAttachment() { return m_cloudOutput1; }
         AZ::Data::Instance<AZ::RPI::AttachmentImage> GetTraceImageAttachment() { return m_cloudTrace; }
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> GetSkyVolumeLUT() { return m_skyVolumeLUT; }
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> GetSkyVolumeFallback() { return m_skyVolumeFallback; }
+
+        //! Находит объём дымки гема SkyAtmosphere и перестраивает растровый
+        //! проход, если объём появился, исчез или сменился.
+        void UpdateSkyVolumeLUT();
 
         //////////////////////////////////////////////////////////////////
         //! AZ::RPI::FeatureProcessor overrides START...
@@ -82,6 +88,10 @@ namespace VolumetricClouds
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudOutput1;
         // Сэмплы марша: один на блок 4x4 пикселей.
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudTrace;
+
+        // Объём 32^3 гема SkyAtmosphere: дымка и пропускание по глубине кадра.
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> m_skyVolumeLUT;
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> m_skyVolumeFallback;
 
         // We need a copy of the previous frame depth buffer, because we reproject 15/16 pixels each frame.
         // This causes visible artifacts at the borders of moving objects. The solution is that if

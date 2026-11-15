@@ -39,6 +39,12 @@
                     "ScopeAttachmentUsage": "Shader",
                     "ShaderInputName": "m_cloudTrace"
                 },
+                {
+                    "Name": "SkyVolumeLUT",
+                    "SlotType": "Input",
+                    "ScopeAttachmentUsage": "Shader",
+                    "ShaderInputName": "m_skyVolumeLUT"
+                },
                 //Output
                 {
                     "Name": "ColorOutput",

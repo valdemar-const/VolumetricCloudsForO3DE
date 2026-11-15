@@ -17,6 +17,7 @@
 #include <Atom/RPI.Reflect/Asset/AssetUtils.h> // FIXME: Try removing
 
 #include <Atom/RPI.Public/Pass/PassFilter.h>
+#include <Atom/RPI.Reflect/Pass/PassName.h>
 #include <Atom/RPI.Public/Pass/RasterPass.h>
 #include <Atom/RPI.Public/Shader/Shader.h>
 #include <Atom/RPI.Public/Scene.h>
@@ -67,6 +68,12 @@ namespace VolumetricClouds
     void CloudscapeFeatureProcessor::Simulate(const SimulatePacket&)
     {
         ResizeOutputAttachmentsIfNeeded();
+        // Проход SkyAtmosphere создают и удаляют вместе с компонентом неба,
+        // поэтому объём ищут повторно; поиск по конвейеру редкий.
+        if ((m_frameCounter % 30) == 0)
+        {
+            UpdateSkyVolumeLUT();
+        }
 
         if (m_cloudscapeComputePass)
         {
@@ -163,6 +170,13 @@ namespace VolumetricClouds
 
         CreateOutputAttachments();
 
+        AZ::RHI::ImageDescriptor fallbackDesc = AZ::RHI::ImageDescriptor::Create3D(
+            AZ::RHI::ImageBindFlags::ShaderReadWrite, 1, 1, 1, AZ::RHI::Format::R16G16B16A16_FLOAT);
+        AZ::RHI::ClearValue fallbackClear = AZ::RHI::ClearValue::CreateVector4Float(0, 0, 0, 0);
+        m_skyVolumeFallback = AZ::RPI::AttachmentImage::Create(*AZ::RPI::ImageSystemInterface::Get()->GetSystemAttachmentPool(),
+            fallbackDesc, AZ::Name(AZStd::string::format("CloudscapeSkyVolumeFallback_%p", static_cast<void*>(this))), &fallbackClear, nullptr);
+        UpdateSkyVolumeLUT();
+
         DisableSceneNotification();
         EnableSceneNotification();
     }
@@ -181,6 +195,32 @@ namespace VolumetricClouds
         const AzFramework::WindowSize traceSize{ (m_viewportSize.m_width + 3) / 4, (m_viewportSize.m_height + 3) / 4 };
         m_cloudTrace = CreateCloudscapeOutputAttachment(AZ::Name(traceName), traceSize, AZ::RHI::Format::R32G32B32A32_UINT);
         AZ_Assert(!!m_cloudTrace, "Failed to create %s", traceName.c_str());
+    }
+
+    void CloudscapeFeatureProcessor::UpdateSkyVolumeLUT()
+    {
+        AZ::Data::Instance<AZ::RPI::AttachmentImage> skyVolume;
+        AZ::RPI::PassFilter passFilter = AZ::RPI::PassFilter::CreateWithTemplateName(AZ::Name("SkyAtmosphereTemplate"), GetParentScene());
+        AZ::RPI::PassSystemInterface::Get()->ForEachPass(passFilter, [&skyVolume](AZ::RPI::Pass* pass) -> AZ::RPI::PassFilterExecutionFlow
+            {
+                if (!pass->IsEnabled())
+                {
+                    return AZ::RPI::PassFilterExecutionFlow::ContinueVisitingPasses;
+                }
+                const AZ::Name imageName(AZ::RPI::ConcatPassString(pass->GetPathName(), AZ::Name("SkyVolumeLUTImageAttachment")));
+                skyVolume = AZ::RPI::AttachmentImage::FindByUniqueName(imageName);
+                return skyVolume ? AZ::RPI::PassFilterExecutionFlow::StopVisitingPasses : AZ::RPI::PassFilterExecutionFlow::ContinueVisitingPasses;
+            });
+
+        if (skyVolume == m_skyVolumeLUT)
+        {
+            return;
+        }
+        m_skyVolumeLUT = skyVolume;
+        if (m_cloudscapeRenderPass)
+        {
+            m_cloudscapeRenderPass->QueueForBuildAndInitialization();
+        }
     }
 
     void CloudscapeFeatureProcessor::ResizeOutputAttachmentsIfNeeded()

@@ -44,6 +44,20 @@ namespace VolumetricClouds
     }
 
 
+    void CloudscapeRasterPass::BuildInternal()
+    {
+        auto* featureProcessor = m_pipeline ? m_pipeline->GetScene()->GetFeatureProcessor<CloudscapeFeatureProcessor>() : nullptr;
+        if (featureProcessor)
+        {
+            // Без SkyAtmosphere слот получает заглушку, и шейдер не читает объём.
+            auto skyVolume = featureProcessor->GetSkyVolumeLUT();
+            m_aerialPerspectiveEnabled = skyVolume ? 1 : 0;
+            AttachImageToSlot(AZ::Name("SkyVolumeLUT"), skyVolume ? skyVolume : featureProcessor->GetSkyVolumeFallback());
+            m_srgNeedsUpdate = true;
+        }
+        AZ::RPI::FullscreenTrianglePass::BuildInternal();
+    }
+
     void CloudscapeRasterPass::FrameBeginInternal(FramePrepareParams params)
     {
         AZ::RPI::FullscreenTrianglePass::FrameBeginInternal(params);
@@ -63,6 +77,7 @@ namespace VolumetricClouds
        if (m_srgNeedsUpdate)
        {
            m_shaderResourceGroup->SetConstant(m_cloudscapeTextureIndexIndex, m_cloudscapeTextureIndex);
+           m_shaderResourceGroup->SetConstant(m_aerialPerspectiveEnabledIndex, m_aerialPerspectiveEnabled);
            m_srgNeedsUpdate = false;
        }
 

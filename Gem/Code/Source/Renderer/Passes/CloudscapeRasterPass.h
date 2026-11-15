@@ -44,6 +44,7 @@ namespace VolumetricClouds
         
         //! Pass behavior overrides
         void InitializeInternal() override;
+        void BuildInternal() override;
         void FrameBeginInternal(FramePrepareParams params) override;
     
     private:    
@@ -57,6 +58,9 @@ namespace VolumetricClouds
         AZ::RHI::ShaderInputNameIndex m_cloudscapeTextureIndexIndex = "m_cloudscapeTextureIndex";
 
         uint32_t m_cloudscapeTextureIndex = 0;
+
+        AZ::RHI::ShaderInputNameIndex m_aerialPerspectiveEnabledIndex = "m_aerialPerspectiveEnabled";
+        uint32_t m_aerialPerspectiveEnabled = 0;
     };
 
 }   // namespace VolumetricClouds

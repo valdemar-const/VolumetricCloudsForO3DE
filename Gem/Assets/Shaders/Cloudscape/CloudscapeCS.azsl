@@ -724,9 +724,11 @@ CloudTraceSample GetCloudColor(const float2 pixUV, const float2 pixLoc)
     float totalAlpha = 1.00 - totalTransmittance;
 
     // Слой гасят на краю карты погоды: дальше узор шума повторяется.
-    // Дымку на дальних облаках дальше добавит воздушная перспектива.
-    const float fadeStartKm = PassSrg::m_weatherMapSizeKm * 0.4;
-    const float fadeEndKm = PassSrg::m_weatherMapSizeKm * 0.5;
+    // До границы затухания дальние облака скрывает воздушная перспектива
+    // растрового прохода. Длинный переход за один-три периода карты
+    // не даёт ровной линии конца слоя у горизонта.
+    const float fadeStartKm = PassSrg::m_weatherMapSizeKm * 1.0;
+    const float fadeEndKm = PassSrg::m_weatherMapSizeKm * 3.0;
     const float fadeFraction = saturate((distanceToInnerSphereKm - fadeStartKm) / max(fadeEndKm - fadeStartKm, 0.001));
     totalAlpha = lerp(totalAlpha, 0.0, fadeFraction);
     totalColor = lerp(totalColor, float3(0.0, 0.0, 0.0), fadeFraction);

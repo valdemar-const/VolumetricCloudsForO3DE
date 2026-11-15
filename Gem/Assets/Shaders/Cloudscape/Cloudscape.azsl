@@ -27,6 +27,23 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
     Texture2D<uint4> m_cloudTrace;
 
+    // 1, если объём m_skyVolumeLUT получен от гема SkyAtmosphere.
+    uint m_aerialPerspectiveEnabled;
+
+    // rgb: дымка до глубины среза, a: непрозрачность воздуха.
+    // Срезы: глубина = (w^2 * 32) * 4 км (SkyAtmosphereCommon.azsli).
+    Texture3D<float4> m_skyVolumeLUT;
+
+    Sampler LinearSampler
+    {
+        MinFilter = Linear;
+        MagFilter = Linear;
+        MipFilter = Linear;
+        AddressU = Clamp;
+        AddressV = Clamp;
+        AddressW = Clamp;
+    };
+
     float4 GetCloudColor(int3 pixelLoc)
     {
         return m_cloudscapeTexture[m_cloudscapeTextureIndex].Load(pixelLoc);
@@ -36,6 +53,12 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 // Ширина перехода у передней границы облака: край облака у геометрии
 // без перехода мерцает из-за глубины в четверти разрешения.
 static const float OcclusionFadeKm = 0.3;
+
+// Постоянные гема SkyAtmosphere: SKY_VOLUME_SLICE_COUNT, SKY_VOLUME_KM_PER_SLICE
+// и множитель экспозиции неба в SkyRayMarching.azsl.
+static const float SkyVolumeSliceCount = 32.0;
+static const float SkyVolumeKmPerSlice = 4.0;
+static const float SkyExposure = 20.0;
 
 PSOutput MainPS(VSOutput IN)
 {
@@ -47,20 +70,42 @@ PSOutput MainPS(VSOutput IN)
 
     // Марш не обрезают геометрией; облако за геометрией гасят здесь
     // по передней глубине облака.
+    uint2 traceDims;
+    PassSrg::m_cloudTrace.GetDimensions(traceDims.x, traceDims.y);
+    const int2 blockLoc = min(pixelLoc.xy >> 2, int2(traceDims) - 1);
+    const CloudTraceSample trace = UnpackCloudTrace(PassSrg::m_cloudTrace.Load(int3(blockLoc, 0)));
+
+    uint2 texDims;
+    PassSrg::m_depthStencilTexture.GetDimensions(texDims.x, texDims.y);
+    const float2 pixelUV = (float2(pixelLoc.xy) + 0.5) / float2(texDims);
+
     const float zDepth = PassSrg::m_depthStencilTexture.Load(pixelLoc).r;
     if (zDepth > 0.0)
     {
-        uint2 traceDims;
-        PassSrg::m_cloudTrace.GetDimensions(traceDims.x, traceDims.y);
-        const int2 blockLoc = min(pixelLoc.xy >> 2, int2(traceDims) - 1);
-        const CloudTraceSample trace = UnpackCloudTrace(PassSrg::m_cloudTrace.Load(int3(blockLoc, 0)));
-
-        uint2 texDims;
-        PassSrg::m_depthStencilTexture.GetDimensions(texDims.x, texDims.y);
-        const float2 pixelUV = (float2(pixelLoc.xy) + 0.5) / float2(texDims);
         const float3 pixelPosWS = WorldPositionFromDepthBuffer(pixelUV, zDepth).xyz;
         const float sceneDistanceKm = length(pixelPosWS - ViewSrg::m_worldPosition) * 0.001;
         cloudColor *= saturate((sceneDistanceKm - trace.m_frontDepthKm) / OcclusionFadeKm);
+    }
+
+    // Воздушная перспектива на средней глубине облака (Hillaire 2020):
+    // воздух перед облаком гасит его свет и добавляет дымку.
+    if (PassSrg::m_aerialPerspectiveEnabled != 0 && cloudColor.a > 0.0)
+    {
+        const float slice = min(trace.m_meanDepthKm / SkyVolumeKmPerSlice, SkyVolumeSliceCount);
+        const float w = sqrt(slice / SkyVolumeSliceCount);
+        float4 airPerspective = PassSrg::m_skyVolumeLUT.SampleLevel(PassSrg::LinearSampler, float3(pixelUV, w), 0);
+
+        // Объём кончается на 128 км. Дальше воздух считают однородным:
+        // пропускание степенно убывает с глубиной, дымка растёт вместе
+        // с непрозрачностью.
+        const float volumeDepthKm = SkyVolumeSliceCount * SkyVolumeKmPerSlice;
+        if (trace.m_meanDepthKm > volumeDepthKm && airPerspective.a > 0.001)
+        {
+            const float opacity = 1.0 - pow(saturate(1.0 - airPerspective.a), trace.m_meanDepthKm / volumeDepthKm);
+            airPerspective.rgb *= opacity / airPerspective.a;
+            airPerspective.a = opacity;
+        }
+        cloudColor.rgb = cloudColor.rgb * (1.0 - airPerspective.a) + airPerspective.rgb * SkyExposure * cloudColor.a;
     }
 
     cloudColor.rgb = TransformColor(cloudColor.rgb, ColorSpaceId::LinearSRGB, ColorSpaceId::ACEScg);
