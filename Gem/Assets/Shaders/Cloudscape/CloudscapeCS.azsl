@@ -146,8 +146,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     uint GetOutputTextureIndex()
     {
         // FIXME: For now always texture 0 until we add reprojection pass.
-        //return 0;
-        return (uint)fmod(m_pixelIndex4x4, 2);
+        return 0;
     }
 
     //bool IsRayMarchedPixel(uint2 pixelLoc)
@@ -726,8 +725,7 @@ float4 GetCloudColor(const float2 pixUV, const float2 pixLoc)
 [numthreads(8, 8, 1)]
 void MainCS(uint3 thread_id: SV_DispatchThreadID)
 {
-    uint2 pixelLoc = thread_id.xy * 4 + PassSrg::GetPixelBlockXY();
-    //uint2 pixelLoc = thread_id.xy;// * 4 + PassSrg::GetPixelBlockXY();
+    uint2 pixelLoc = thread_id.xy;
 
     // Do nothing if we are outside the target texture dimensions.
     uint2 texDims;

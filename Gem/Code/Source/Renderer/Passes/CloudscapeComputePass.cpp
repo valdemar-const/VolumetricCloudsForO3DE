@@ -90,18 +90,12 @@ namespace VolumetricClouds
 
         const auto attachmentSize = output0ImageAttachment->GetDescriptor().m_size;
 
-        // Each Thread is invoked to write to 1 out of 16 pixels (0..15)
-        // in 4x4 block.
-        // Which means the total thread counts in X = ceil(imageWidth/4)
-        // and for Y = ceil(imageHeight/4);
-        // REMARK: Each frame, the feature processor will call UpdateFrameCounter(), which will
-        // define the pixel index in the range 0..15.
-        
-        //const auto totalThreadsX = attachmentSize.m_width;
-        //const auto totalThreadsY = attachmentSize.m_height;
-
-        const auto totalThreadsX = static_cast<uint32_t>(AZStd::ceil(static_cast<float>(attachmentSize.m_width) / 4.0f));
-        const auto totalThreadsY = static_cast<uint32_t>(AZStd::ceil(static_cast<float>(attachmentSize.m_height) / 4.0f));
+        // Full march: every pixel of the cloudscape texture is ray marched
+        // every frame. The 1-of-16-pixels-per-frame scheme requires a working
+        // temporal reprojection pass to fill the remaining 15 pixels, and that
+        // pass is not wired up yet; without it the frame keeps stale pixels.
+        const auto totalThreadsX = attachmentSize.m_width;
+        const auto totalThreadsY = attachmentSize.m_height;
 
         SetTargetThreadCounts(totalThreadsX, totalThreadsY, 1);
     }
