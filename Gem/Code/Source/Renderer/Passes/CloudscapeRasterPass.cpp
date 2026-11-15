@@ -90,7 +90,10 @@ namespace VolumetricClouds
 
     void CloudscapeRasterPass::UpdateFrameCounter(uint32_t frameCounter)
     {
-        m_cloudscapeTextureIndex = frameCounter % 2;
+        // Вычислительный проход пишет только в текстуру 0, пока репроекция
+        // не чередует текстуры; текстура 1 содержит устаревшие данные.
+        AZ_UNUSED(frameCounter);
+        m_cloudscapeTextureIndex = 0;
         m_srgNeedsUpdate = true;
     }
 

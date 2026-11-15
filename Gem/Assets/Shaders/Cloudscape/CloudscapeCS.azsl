@@ -479,13 +479,26 @@ struct AtmosphereIntersectionInfo
 };
 
 
-// FIXME/TODO: What to do if the position is inside the cloud slab?
-// 
-// The clouds exist withing a thick spherical slab that surrounds the earth.
-// There will be an Inner Sphere and an Outer Sphere. The difference in radius between
-// these two spheres will define the thickness of the volume where the clouds may be present.
-// This function returns true if there's line of sight between the current camera position (along the view direction)
-// and the Inner Sphere. All relevant information is cached in the  AtmosphereIntersectionInfo struct.
+// Возвращает оба корня пересечения луча со сферой с центром в начале координат
+// (x <= y). При промахе возвращает (-1, -1).
+float2 RaySphereHits(float3 rayOrigin, float3 rayDirection, float radius)
+{
+    const float b = dot(rayOrigin, rayDirection);
+    const float c = dot(rayOrigin, rayOrigin) - radius * radius;
+    const float discriminant = b * b - c;
+    if (discriminant < 0.0)
+    {
+        return float2(-1.0, -1.0);
+    }
+    const float s = sqrt(discriminant);
+    return float2(-b - s, -b + s);
+}
+
+// Облака лежат в сферическом слое между внутренней и внешней сферами.
+// Камера самолёта бывает под слоем, внутри слоя и над ним, поэтому отрезок
+// марша [tStart, tEnd] выбирают по высоте камеры. Отрезок обрезают глубиной
+// сцены: облако между камерой и самолётом остаётся видимым, облако за
+// самолётом и за землёй не рисуют.
 bool GetCloudSlabIntersections(const float2 pixUV, inout AtmosphereIntersectionInfo intersectionResults, inout bool isCloudPixelBlocked)
 {
     const float zDepth = PassSrg::m_depthStencilTexture.SampleLevel(PassSrg::ClampPointSampler, pixUV, 0).r;
@@ -495,50 +508,60 @@ bool GetCloudSlabIntersections(const float2 pixUV, inout AtmosphereIntersectionI
     const float3 rayDirection = pixelViewVec / distanceToPixel;
 
     float3 cameraPositionKm = ViewSrg::m_worldPosition * 0.001;
-    cameraPositionKm.z += PassSrg::m_planetRadiusKm; // An approximation.
+    cameraPositionKm.z += PassSrg::m_planetRadiusKm;
 
-    const float atmosphereInnerRadiusKm = PassSrg::m_planetRadiusKm +  PassSrg::m_cloudSlabDistanceAboveSeaLevelKm;
+    const float innerRadiusKm = PassSrg::m_planetRadiusKm + PassSrg::m_cloudSlabDistanceAboveSeaLevelKm;
+    const float outerRadiusKm = innerRadiusKm + PassSrg::m_cloudSlabThicknessKm;
+    const float cameraRadiusKm = length(cameraPositionKm);
 
-    // The atmosphere is the region between two concentric spheres centered at world origin.
-    // the clouds will only form within the atmosphere.
-    // We need to calculate the position, in the ray direction where we touch the inner sphere.
-    const float3 earthCenter = 0;
-    //const float atmosphereInnerRadius = 500.0; // Move to PassSrg
-    const float distanceToInnerSphereKm = RaySphereClosestHitWS(earthCenter, atmosphereInnerRadiusKm, cameraPositionKm, rayDirection);
-    if (distanceToInnerSphereKm < 0.00)
+    const float2 innerHits = RaySphereHits(cameraPositionKm, rayDirection, innerRadiusKm);
+    const float2 outerHits = RaySphereHits(cameraPositionKm, rayDirection, outerRadiusKm);
+    const float2 planetHits = RaySphereHits(cameraPositionKm, rayDirection, PassSrg::m_planetRadiusKm);
+
+    float tStart;
+    float tEnd;
+    if (cameraRadiusKm < innerRadiusKm)
     {
-        return false;
+        tStart = innerHits.y;
+        tEnd = outerHits.y;
+        if (planetHits.x > 0.0)
+        {
+            // Луч уходит в землю раньше, чем достигает слоя.
+            return false;
+        }
+    }
+    else if (cameraRadiusKm <= outerRadiusKm)
+    {
+        tStart = 0.0;
+        tEnd = (innerHits.x > 0.0) ? innerHits.x : outerHits.y;
+    }
+    else
+    {
+        if (outerHits.x <= 0.0)
+        {
+            return false;
+        }
+        tStart = outerHits.x;
+        tEnd = (innerHits.x > 0.0) ? innerHits.x : outerHits.y;
     }
 
-    const float distanceToOuterSphereKm = RaySphereClosestHitWS(earthCenter, atmosphereInnerRadiusKm + PassSrg::m_cloudSlabThicknessKm, cameraPositionKm, rayDirection);
-    float rayMarchDistanceKm = distanceToOuterSphereKm - distanceToInnerSphereKm;
-    // REMARK: ViewSrg::GetNearZ() is the far Z because the O3DE Shader APIs are based on
-    // reverse depth.
+    // ViewSrg::GetNearZ() возвращает дальнюю плоскость: O3DE применяет обратную глубину.
     const float farZ = ViewSrg::GetNearZ();
     isCloudPixelBlocked = false;
     if (distanceToPixel < farZ)
     {
-        // If the distanceToPixel is less than the farZ then the view ray is intersecting something.
-        float rayMarchDistanceKm2 = min( (distanceToPixel/1000.0) - distanceToInnerSphereKm, rayMarchDistanceKm);
-        // if (rayMarchDistanceKm <= 0.0)
-        // {
-        //     return false;
-        // }
-        isCloudPixelBlocked = (rayMarchDistanceKm2 <= 0.00);
+        tEnd = min(tEnd, distanceToPixel * 0.001);
     }
-
-    const float3 rayMarchStartPosKm = cameraPositionKm + distanceToInnerSphereKm * rayDirection;
-
-    if (rayMarchStartPosKm.z < PassSrg::m_planetRadiusKm)
+    if (tEnd <= tStart)
     {
-        // A simplification of going below water level.
+        isCloudPixelBlocked = true;
         return false;
     }
 
-    intersectionResults.m_rayMarchStartPosKm = rayMarchStartPosKm;
-    intersectionResults.m_rayMarchDistanceKm = rayMarchDistanceKm;
+    intersectionResults.m_rayMarchStartPosKm = cameraPositionKm + tStart * rayDirection;
+    intersectionResults.m_rayMarchDistanceKm = tEnd - tStart;
     intersectionResults.m_rayDirection = rayDirection;
-    intersectionResults.m_distanceFromCameraToInnerSphereKm = distanceToInnerSphereKm;
+    intersectionResults.m_distanceFromCameraToInnerSphereKm = tStart;
     return true;
 }
 
@@ -586,128 +609,112 @@ float4 GetCloudColor(const float2 pixUV, const float2 pixLoc)
     // The minimum distance to raymarch inside the atmosphere is the atmosphere's thickness.
     // Throughout this thickness we will do minimum PassSrg::m_minRayMarchingSteps samples.
     // But when looking towards the horizon we'll ray march up to PassSrg::m_maxRayMarchingSteps samples.
-    const uint rayMarchStepsDivider  = 0; //uint(isCloudPixelBlocked) * 1 ;
-    const int minRayMarchingSteps = max(PassSrg::m_minRayMarchingSteps >> rayMarchStepsDivider, 1);
-    const int maxRayMarchingSteps = min(PassSrg::m_maxRayMarchingSteps >> rayMarchStepsDivider, 128);
-    const int numSamples = max(min((minRayMarchingSteps * rayMarchDistanceKm) / (PassSrg::m_cloudSlabThicknessKm), maxRayMarchingSteps), 1);
-    float stepSizeKm = rayMarchDistanceKm/numSamples;
-#define LARGE_STEP_INC 1 // Values greater than 1 introduce noise.
+    // Шаг растёт с расстоянием от камеры: вблизи самолёта шаг 25 м сохраняет
+    // форму облака, вдали шаг стремится к равномерному шагу по числу сэмплов.
+    const int minRayMarchingSteps = max((int)PassSrg::m_minRayMarchingSteps, 1);
+    const int maxRayMarchingSteps = min((int)PassSrg::m_maxRayMarchingSteps, 128);
+    const int numSamples = max(min((int)((minRayMarchingSteps * rayMarchDistanceKm) / PassSrg::m_cloudSlabThicknessKm), maxRayMarchingSteps), 1);
+    const float farStepSizeKm = rayMarchDistanceKm / numSamples;
+    const float nearStepSizeKm = min(0.025, farStepSizeKm);
+    const float stepGrowthDistanceKm = 10.0;
+    const int maxIterations = 256;
 
-    const float3 rayMarchStartPosKm = interInfo.m_rayMarchStartPosKm + rayDirection * GetJitterOffset(pixLoc) * stepSizeKm;
+    // Длина шага к солнцу не зависит от шага взгляда: иначе облако вблизи
+    // камеры получает короткий теневой луч и выглядит пересвеченным.
+    // Шесть шагов с удвоением покрывают 63 базовых шага, то есть треть толщины слоя.
+    const float lightStepSizeKm = PassSrg::m_cloudSlabThicknessKm / (3.0 * 63.0);
 
-    float3 totalColor = float3(0.0, 0.0, 0.00);
+    const float jitter = GetJitterOffset(pixLoc) * 0.5 + 0.5;
+
+    float3 totalColor = float3(0.0, 0.0, 0.0);
     float totalTransmittance = 1.0;
-    //float totalAlpha = 0.0;
 
-    // Extinction/Attenuation coefficent.
-    const float eCoef = max(PassSrg::m_aCoef + PassSrg::m_sCoef, 0.00000001); //0.04m-1 for a Step size of 1KM.
+    const float eCoef = max(PassSrg::m_aCoef + PassSrg::m_sCoef, 0.00000001);
+
+    // Мип шума выбирают по расстоянию до точки, а не по длине луча:
+    // облако рядом с камерой всегда получает мип 0 и полную деталь.
+    const float mipStartDistanceKm = 2.0;
+    const float mipEndDistanceKm = 40.0;
+    const float maxMip = max(float(PassSrg::m_maxMipLevels) - 1.0, 0.0);
+
+    const float uvwScale = PassSrg::m_uvwScale;
 
     bool isEmptySpace = true;
     int zeroDensitySampleCount = 0;
-    int stepIdx = 0;
+    float t = 0.0;
+    float prevT = 0.0;
+    bool isFirstStep = true;
 
-    // Using mip level for 3D Noise Texture sampling is very important for performance reasons.
-    // The trick is in finding the starting level.
-    // It was found that mip level should always start at 0.0 (best quality) for starting distances
-    // less than m_cloudSlabDistanceAboveSeaLevelKm.
-    float mipLevel = Remap(distanceToInnerSphereKm,
-                           PassSrg::m_cloudSlabDistanceAboveSeaLevelKm,
-                           distanceToInnerSphereKm + rayMarchDistanceKm,
-                           0.0, PassSrg::m_maxMipLevels - 1);
-    mipLevel = max(0.0, mipLevel);
-    const float mipLevelStep = float(PassSrg::m_maxMipLevels) / float(numSamples);
-
-    // // As the ray marching distance gets longer, it is important to shrink the uvw scale
-    // // when sampling 3D noise textures from World Position.
-    const float minUVWscale = PassSrg::m_uvwScale * 0.250;
-    const float maxUVWscale = PassSrg::m_uvwScale;
-    const float uvwScaleRemap = saturate(Remap(distanceToInnerSphereKm,
-                           PassSrg::m_cloudSlabDistanceAboveSeaLevelKm * 0.75,
-                           PassSrg::m_cloudSlabDistanceAboveSeaLevelKm * 10.0,
-                           0.0, 1.0));
-    const float uvwScale = PassSrg::m_uvwScale; //lerp(maxUVWscale, minUVWscale, uvwScaleRemap);
-    
-    //float mipLevel = Remap(numSamples, MIN_STEPS, MAX_STEPS, 0.0, PassSrg::m_maxMipLevels - 1);
-    //const float  mipLevelStep = 0.0;
-
-    while (stepIdx < numSamples)
+    for (int iteration = 0; iteration < maxIterations && t < rayMarchDistanceKm; iteration++)
     {
-        // The loop starts assuming we are in empty space.
-        const float3 rayDirectionStep = rayDirection * stepIdx;
-        const float3 rayWorldPosKm = rayMarchStartPosKm + rayDirectionStep * stepSizeKm;
-        float heightFraction = PassSrg::GetHeightFraction(rayWorldPosKm);
-        const bool expensive = !isEmptySpace;
-        float sampledCloudDensity = SampleCloudDensity(rayWorldPosKm, uvwScale, mipLevel, heightFraction, expensive);
+        const float distanceFromCameraKm = distanceToInnerSphereKm + t;
+        const float growth = saturate(distanceFromCameraKm / stepGrowthDistanceKm);
+        float stepSizeKm = lerp(nearStepSizeKm, farStepSizeKm, growth * growth);
+        if (isEmptySpace)
+        {
+            stepSizeKm *= 2.0;
+        }
+
+        // Первый шаг сдвинут шумом на долю шага: сдвиг убирает полосы от
+        // одинаковых для всех пикселей позиций сэмплов.
+        const float sampleT = isFirstStep ? t + jitter * stepSizeKm : t;
+        isFirstStep = false;
+
+        const float3 rayWorldPosKm = interInfo.m_rayMarchStartPosKm + rayDirection * sampleT;
+        const float heightFraction = PassSrg::GetHeightFraction(rayWorldPosKm);
+        const float mipLevel = saturate((distanceFromCameraKm - mipStartDistanceKm) / (mipEndDistanceKm - mipStartDistanceKm)) * maxMip;
+        const float sampledCloudDensity = SampleCloudDensity(rayWorldPosKm, uvwScale, mipLevel, heightFraction, !isEmptySpace);
 
         if (sampledCloudDensity <= 0.0)
         {
-            if (isEmptySpace)
+            if (!isEmptySpace)
             {
-                // Keep doing cheap sampling at large steps;
-                stepIdx += LARGE_STEP_INC;
-                continue;
+                zeroDensitySampleCount++;
+                if (zeroDensitySampleCount >= 6)
+                {
+                    isEmptySpace = true;
+                }
             }
-            zeroDensitySampleCount++;
-            stepIdx++;
-            if (zeroDensitySampleCount >= 6)
-            {
-                isEmptySpace = true;
-            }
+            prevT = t;
+            t = sampleT + stepSizeKm;
             continue;
         }
         zeroDensitySampleCount = 0;
 
-        // We found a cloud, but if we were doing cheap sampling in empty space
-        // we need to step back by LARGE_STEP_INC and start doing "expensive" sampling in small steps.
+        // Плотность найдена крупным шагом: возврат на начало шага и переход
+        // на мелкие шаги с высокочастотным шумом.
         if (isEmptySpace)
         {
             isEmptySpace = false;
-            stepIdx = max(stepIdx - LARGE_STEP_INC, 0);
+            t = prevT;
             continue;
         }
 
-        float stepTransmittance = exp(-eCoef * sampledCloudDensity * stepSizeKm);
+        const float stepTransmittance = exp(-eCoef * sampledCloudDensity * stepSizeKm);
+        const float3 luminance = GetMultiScatteredLuminance(rayWorldPosKm, lightStepSizeKm, rayDirection) + PassSrg::GetAmbientLightColor(heightFraction);
 
-        // Calculate the Light Energy that arrives as this point in the raymarch.
-        const float3 luminance = GetMultiScatteredLuminance(rayWorldPosKm, stepSizeKm, rayDirection) + PassSrg::GetAmbientLightColor(heightFraction);
-
-        // The frostbite trick for better integration.
-        float3 integScatt = (luminance - luminance * stepTransmittance) / eCoef;
+        // Энергосберегающее интегрирование по отрезку (Hillaire, Frostbite 2016).
+        const float3 integScatt = (luminance - luminance * stepTransmittance) / eCoef;
         totalColor += totalTransmittance * integScatt;
         totalTransmittance *= stepTransmittance;
 
-        //totalColor += totalTransmittance * currentLight * stepSizeKm;
-
-        // The higher the total alpha, the less the new transmittance contributes to the total alpha.
-        //totalAlpha += (1.0 - stepTransmittance) * (1.0 - totalAlpha);
-        
-        //if (totalAlpha >= 0.950)
-        if (totalTransmittance <= 0.05)
+        if (totalTransmittance <= 0.01)
         {
-            // TODO: Add Russian Roulette.
-            // Not getting any more dense than this.
-            // Exit for loop.
             break;
         }
-        stepIdx++;
-        mipLevel += mipLevelStep;
+        prevT = t;
+        t = sampleT + stepSizeKm;
     }
 
     float totalAlpha = 1.00 - totalTransmittance;
 
-    //totalColor = max(PassSrg::GetAmbientLightColor(0), totalColor);
-
-    // We are going to alter alpha (reduce it) starting with the current value
-    // all the way to 0 if the distance from the camera to the inner sphere starts to exceed
-    // 10 times the camera far plane distance.
-    const float alphaReduceStartDistance = (10 * 1024.0)*0.001;
-    if (distanceToInnerSphereKm >= alphaReduceStartDistance)
-    {
-        const float maxDistance = alphaReduceStartDistance * 3.0;//PassSrg::m_weatherMapSizeKm * 0.5;
-        const float fraction = saturate((distanceToInnerSphereKm - alphaReduceStartDistance)/maxDistance);
-        totalAlpha = lerp(totalAlpha, 0, fraction);
-        totalColor = lerp(totalColor, float3(0, 0.0, 0), fraction);
-    }
+    // Слой гасят на краю карты погоды: дальше узор шума повторяется.
+    // Дымку на дальних облаках дальше добавит воздушная перспектива.
+    const float fadeStartKm = PassSrg::m_weatherMapSizeKm * 0.4;
+    const float fadeEndKm = PassSrg::m_weatherMapSizeKm * 0.5;
+    const float fadeFraction = saturate((distanceToInnerSphereKm - fadeStartKm) / max(fadeEndKm - fadeStartKm, 0.001));
+    totalAlpha = lerp(totalAlpha, 0.0, fadeFraction);
+    totalColor = lerp(totalColor, float3(0.0, 0.0, 0.0), fadeFraction);
 
     return float4(totalColor, totalAlpha);//TransformColor(float3(1, 1, 1), ColorSpaceId::LinearSRGB, ColorSpaceId::ACEScg);
 
@@ -746,7 +753,7 @@ void MainCS(uint3 thread_id: SV_DispatchThreadID)
     // }
 
     float2 pixelLocF = float2(pixelLoc);
-    float2 pixelUV = pixelLocF / float2(texDims);
+    float2 pixelUV = (pixelLocF + 0.5) / float2(texDims);
     float4 cloudColor = GetCloudColor(pixelUV, pixelLocF);
     
     uint pingPondIdx = PassSrg::GetOutputTextureIndex();

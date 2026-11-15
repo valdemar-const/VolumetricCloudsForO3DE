@@ -37,12 +37,8 @@ PSOutput MainPS(VSOutput IN)
 
     const int3 pixelLoc = int3(IN.m_position.xy, 0);
 
-    if (PassSrg::m_depthStencilTexture.Load(pixelLoc).r != 0)
-    {
-        OUT.m_color = float4(0, 0, 0, 0);
-        return OUT;
-    }
-
+    // Проверку глубины здесь не делают: вычислительный проход уже обрезал
+    // луч по глубине сцены, и облако перед самолётом должно его закрывать.
     float4 cloudColor = PassSrg::GetCloudColor(pixelLoc);
 
     cloudColor.rgb = TransformColor(cloudColor.rgb, ColorSpaceId::LinearSRGB, ColorSpaceId::ACEScg);
