@@ -205,11 +205,17 @@ ShaderResourceGroup PassSrg : SRG_PerPass
         return m_sunColorAndIntensity.rgb * m_sunColorAndIntensity.a;
     }
 
+    // Яркость неба, рассеянная в точку облака. Результат умножают на
+    // коэффициент рассеяния, как свет солнца; тогда в толще облака
+    // яркость стремится к яркости неба, а не к ambient / ослабление.
+    // Основание видит тёмную землю и нижнюю часть облака, поэтому
+    // получает треть яркости вершины.
     float3 GetAmbientLightColor(float heightFraction)
     {
+        static const float AmbientRadianceScale = 0.08;
         const float4 ambientColorAndIntensity = m_ambientLightColorAndIntensity * m_sunColorAndIntensity;
-        const float3 ambientColor = ambientColorAndIntensity.rgb * ambientColorAndIntensity.a;
-        return lerp(ambientColor, ambientColor * 10.0, saturate(heightFraction));
+        const float3 ambientColor = ambientColorAndIntensity.rgb * ambientColorAndIntensity.a * AmbientRadianceScale;
+        return m_sCoef * lerp(ambientColor * 0.33, ambientColor, saturate(heightFraction));
     }
 
     float4 GetWeatherData(float3 worldPosKm)
@@ -326,7 +332,10 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
     float shapeAltering = shapeRemapBottom * shapeRemapTop;
 
 
-    float densityRemapBottom = heightFraction * saturate(Remap(heightFraction, 0.0, 0.15, 0.0, 0.10));
+    // Плотность растёт от основания к вершине в 3 раза: основание рыхлое,
+    // вершина плотная (Schneider 2015). Множитель 0.1 исходного профиля
+    // давал ослабление около 1 км^-1, и облако выглядело туманом.
+    float densityRemapBottom = saturate(Remap(heightFraction, 0.0, 0.5, 0.35, 1.0));
     float densityRemapTop = saturate(Remap(heightFraction, 0.9, 1.0, 1.0, 0.0));
     const float wheaterMapDensity = weatherData.a;
     float densityAlteration = PassSrg::m_globalCloudDensity * densityRemapBottom * densityRemapTop * wheaterMapDensity * 2.0;

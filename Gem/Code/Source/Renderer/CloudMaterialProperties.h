@@ -27,19 +27,18 @@ namespace VolumetricClouds
         bool operator==(const CloudMaterialProperties& rhs) const;
         bool operator!=(const CloudMaterialProperties& rhs) const;
 
-        static constexpr float DEFAULT_ABSORPTION_COEFFICIENT = 0.01f; //[m-1]
+        // Капли воды почти не поглощают видимый свет: альбедо рассеяния
+        // облака выше 0.99. При альбедо 0.75 многократное рассеяние теряет
+        // большую часть энергии, и облако выглядит серым.
+        // Ослабление в кучевом облаке: 0.02-0.1 м^-1.
+        static constexpr float DEFAULT_ABSORPTION_COEFFICIENT = 0.0001f; //[m-1]
+        static constexpr float DEFAULT_SCATTERING_COEFFICIENT = 0.04f; //[m-1]
 
-        // NOTE: Beer's Law Attenuation Coefficient = Absorption + Scattering coefficients.
-        // Attenuation coefficient is typically 0.04[m-1] for clouds.
-        // For clouds, Scattering coefficient is typically 3x Absorption coeffcient.
-
-        // Beer's Law Absorption coefficient. in units [m-1] == [1/m].
-        // For clouds it is typically 0.01[m-1]
+        // Поглощение по закону Бера, м^-1.
         float m_absorptionCoefficient = DEFAULT_ABSORPTION_COEFFICIENT;
 
-        // Beer's Law Scattering coefficient. in units [m-1] == [1/m].
-        // For clouds it is typically 3x(Absorption coefficient) 0.03[m-1]
-        float m_scatteringCoefficient = 3.0f * DEFAULT_ABSORPTION_COEFFICIENT;
+        // Рассеяние по закону Бера, м^-1.
+        float m_scatteringCoefficient = DEFAULT_SCATTERING_COEFFICIENT;
 
         // Excentricity constant in HenyeyGreenstein phase function. Typically 0.2.
         // A number between [-1,1]. The closer it is to 1.0 the more forward scattering.
