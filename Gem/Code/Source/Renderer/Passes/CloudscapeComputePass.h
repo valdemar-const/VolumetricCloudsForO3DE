@@ -93,6 +93,7 @@ namespace VolumetricClouds
         AZ::RHI::ShaderInputNameIndex m_windSpeedKmPerSecIndex = "m_windSpeedKmPerSec";
         AZ::RHI::ShaderInputNameIndex m_windDirectionIndex = "m_windDirection";
         AZ::RHI::ShaderInputNameIndex m_cloudTopOffsetKmIndex = "m_cloudTopOffsetKm";
+        AZ::RHI::ShaderInputNameIndex m_cloudEdgeSharpnessIndex = "m_cloudEdgeSharpness";
 
         AZ::RHI::ShaderInputNameIndex m_aCoefIndex = "m_aCoef";
         AZ::RHI::ShaderInputNameIndex m_sCoefIndex = "m_sCoef";

@@ -86,6 +86,9 @@ namespace VolumetricClouds
         // Pushes the top of the clouds along the wind direction by this
         // distance. Useful for dramatic/artistic effects.
         float m_cloudTopOffsetKm = 0.0;
+        // Сужает переход плотности на краю облака: при 1 край полупрозрачный
+        // шириной в сотни метров, при 4 край кучевого облака чёткий.
+        float m_cloudEdgeSharpness = 4.0;
         // An RGBA Texture with weather map data. Info per channel:
         // R: Low coverage map.
         // G: High coverage map. Kicks in when @m_globalCloudCoverage > 0.5.

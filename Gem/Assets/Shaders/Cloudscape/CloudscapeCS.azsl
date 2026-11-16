@@ -109,6 +109,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     // Pushes the top of the clouds along the wind direction by this
     // distance. Useful for dramatic/artistic effects.
     float m_cloudTopOffsetKm;
+    // Во сколько раз сужен переход плотности на краю облака.
+    float m_cloudEdgeSharpness;
 
     Texture2D<float2> m_depthStencilTexture;
     Sampler ClampPointSampler
@@ -373,7 +375,11 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
         result = saturate(Remap(result, highFreqNoiseModified, 1, 0, 1));
     }
 
-    return result * densityAlteration;
+    // Плотность после Remap растёт от края линейно по значению шума, а шум
+    // меняется медленно: полупрозрачный край выходит шириной в сотни
+    // метров. У кучевого облака граница капель резкая, край виден чётко.
+    // Множитель m_cloudEdgeSharpness сужает переход; 1 даёт исходный край.
+    return saturate(result * max(PassSrg::m_cloudEdgeSharpness, 1.0)) * densityAlteration;
 }
 
 

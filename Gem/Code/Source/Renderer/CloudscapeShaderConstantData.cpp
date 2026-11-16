@@ -42,6 +42,7 @@ namespace VolumetricClouds
                 ->Field("WindSpeedKmPerSec", &CloudscapeShaderConstantData::m_windSpeedKmPerSec)
                 ->Field("WindDirection", &CloudscapeShaderConstantData::m_windDirection)
                 ->Field("CloudTopOffsetKm", &CloudscapeShaderConstantData::m_cloudTopOffsetKm)
+                ->Field("CloudEdgeSharpness", &CloudscapeShaderConstantData::m_cloudEdgeSharpness)
                 ->Field("CloudMaterialProperties", &CloudscapeShaderConstantData::m_cloudMaterialProperties)
                 ;
 
@@ -107,6 +108,9 @@ namespace VolumetricClouds
                             ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
                             ->Attribute(AZ::Edit::Attributes::Min, -5.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 5.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudEdgeSharpness, "Cloud Edge Sharpness", "Narrows the density ramp at cloud edges. 1 gives wide semi-transparent fringes, 4 gives crisp cumulus edges.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 1.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 16.0)
                     ->EndGroup()
                     ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_cloudMaterialProperties, "Cloud Material Properties", "")
                     ;
@@ -133,6 +137,7 @@ namespace VolumetricClouds
                AZ::IsClose(m_windSpeedKmPerSec, rhs.m_windSpeedKmPerSec) &&
                m_windDirection.IsClose(rhs.m_windDirection) &&
                AZ::IsClose(m_cloudTopOffsetKm, rhs.m_cloudTopOffsetKm) &&
+               AZ::IsClose(m_cloudEdgeSharpness, rhs.m_cloudEdgeSharpness) &&
                (m_cloudMaterialProperties == rhs.m_cloudMaterialProperties)
                ;
     }
