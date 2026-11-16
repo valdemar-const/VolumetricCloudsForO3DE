@@ -438,14 +438,19 @@ float3 GetMultiScatteredLuminance(float3 rayWorldPosKm, float stepSizeKm, float3
     #define MAX_OCTAVES (3)
     const float3 abc = PassSrg::m_multipleScatteringABC;
     float3 powABC = float3(1, 1, 1);
+    const float cosViewSun = dot(PassSrg::m_directionTowardsTheSun, viewDirection);
+    const float powderWeight = 0.5 * saturate(0.5 - 0.5 * cosViewSun);
     for (int N = 0; N < MAX_OCTAVES; N++)
     {
         // Beer Law
         const float powA = powABC.x;
         const float attenuatedTransmittance = exp(-powA*opticalDepth);
 
-        // Powder sugar
-        const float powderSugar = 1.00; //2 * (1.0 - exp(-powA*opticalDepth * 2));
+        // Эффект powder (Schneider 2015): у края облака свет ещё не набрал
+        // рассеяния внутрь, и край со стороны солнца темнее середины.
+        // Против солнца эффект не виден, поэтому вес зависит от угла.
+        const float powderFactor = 1.0 - exp(-2.0 * powA * opticalDepth);
+        const float powderSugar = lerp(1.0, powderFactor, powderWeight);
 
         const float powB = powABC.y;
         const float scatteringContribution = PassSrg::m_sCoef * powB;
@@ -459,7 +464,16 @@ float3 GetMultiScatteredLuminance(float3 rayWorldPosKm, float stepSizeKm, float3
         powABC *= abc;
     }
 
-    // FIXME: Add a little bit more of scattering??
+    // Свет, отражённый землёй, подсвечивает основание облака снизу.
+    // Яркость земли по Ламберту: albedo * E * cos / pi; изотропная фаза
+    // по нижней полусфере даёт половину этой яркости. Облако под точкой
+    // ослабляет вклад линейно по высоте в слое.
+    static const float GroundAlbedo = 0.1;
+    const float3 upDirection = normalize(rayWorldPosKm);
+    const float sunCosine = saturate(dot(upDirection, directionTowardsTheSun));
+    const float heightFraction = saturate(PassSrg::GetHeightFraction(rayWorldPosKm));
+    luminance += PassSrg::m_sCoef * sunColor * (0.5 * GroundAlbedo / 3.14159265 * sunCosine * (1.0 - heightFraction));
+
     return luminance;
 }
 
