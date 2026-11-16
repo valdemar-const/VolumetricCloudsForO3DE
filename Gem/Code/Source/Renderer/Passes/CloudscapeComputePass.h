@@ -95,6 +95,10 @@ namespace VolumetricClouds
         AZ::RHI::ShaderInputNameIndex m_cloudTopOffsetKmIndex = "m_cloudTopOffsetKm";
         AZ::RHI::ShaderInputNameIndex m_cloudEdgeSharpnessIndex = "m_cloudEdgeSharpness";
         AZ::RHI::ShaderInputNameIndex m_cloudTopVariationIndex = "m_cloudTopVariation";
+        AZ::RHI::ShaderInputNameIndex m_cloudBaseRoundnessIndex = "m_cloudBaseRoundness";
+        AZ::RHI::ShaderInputNameIndex m_cloudTypeShareIndex = "m_cloudTypeShare";
+        AZ::RHI::ShaderInputNameIndex m_cloudTypeBaseHeightIndex = "m_cloudTypeBaseHeight";
+        AZ::RHI::ShaderInputNameIndex m_cloudTypeTopHeightIndex = "m_cloudTypeTopHeight";
         AZ::RHI::ShaderInputNameIndex m_phaseBackLobeGIndex = "m_phaseBackLobeG";
         AZ::RHI::ShaderInputNameIndex m_phaseBackLobeWeightIndex = "m_phaseBackLobeWeight";
 

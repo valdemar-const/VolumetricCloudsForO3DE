@@ -93,6 +93,22 @@ namespace VolumetricClouds
         // канала B карты погоды; при 1 часть вершин опускается до четверти
         // этой высоты.
         float m_cloudTopVariation = 0.6f;
+        // Скругление основания: 0 даёт плоское основание на одной высоте,
+        // 1 - основание с буграми и разной высотой у соседних облаков.
+        float m_cloudBaseRoundness = 0.7f;
+
+        // Типы облаков. Доля задаёт относительную площадь неба под типом,
+        // 0 отключает тип; при всех долях 0 облаков нет. Основание и вершина
+        // заданы долей толщины слоя облаков.
+        float m_stratusShare = 0.0f;
+        float m_stratusBaseHeight = 0.0f;
+        float m_stratusTopHeight = 0.12f;
+        float m_stratocumulusShare = 0.2f;
+        float m_stratocumulusBaseHeight = 0.03f;
+        float m_stratocumulusTopHeight = 0.35f;
+        float m_cumulusShare = 0.8f;
+        float m_cumulusBaseHeight = 0.03f;
+        float m_cumulusTopHeight = 1.0f;
         // An RGBA Texture with weather map data. Info per channel:
         // R: Low coverage map.
         // G: High coverage map. Kicks in when @m_globalCloudCoverage > 0.5.

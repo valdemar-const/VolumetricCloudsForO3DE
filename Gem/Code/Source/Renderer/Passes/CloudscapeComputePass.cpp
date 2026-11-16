@@ -162,6 +162,11 @@ namespace VolumetricClouds
            m_shaderResourceGroup->SetConstant(m_cloudTopOffsetKmIndex, m_shaderConstantData->m_cloudTopOffsetKm);
            m_shaderResourceGroup->SetConstant(m_cloudEdgeSharpnessIndex, m_shaderConstantData->m_cloudEdgeSharpness);
            m_shaderResourceGroup->SetConstant(m_cloudTopVariationIndex, m_shaderConstantData->m_cloudTopVariation);
+           m_shaderResourceGroup->SetConstant(m_cloudBaseRoundnessIndex, m_shaderConstantData->m_cloudBaseRoundness);
+           const auto& d = *m_shaderConstantData;
+           m_shaderResourceGroup->SetConstant(m_cloudTypeShareIndex, AZ::Vector3(d.m_stratusShare, d.m_stratocumulusShare, d.m_cumulusShare));
+           m_shaderResourceGroup->SetConstant(m_cloudTypeBaseHeightIndex, AZ::Vector3(d.m_stratusBaseHeight, d.m_stratocumulusBaseHeight, d.m_cumulusBaseHeight));
+           m_shaderResourceGroup->SetConstant(m_cloudTypeTopHeightIndex, AZ::Vector3(d.m_stratusTopHeight, d.m_stratocumulusTopHeight, d.m_cumulusTopHeight));
            m_shaderResourceGroup->SetConstant(m_phaseBackLobeGIndex, m_shaderConstantData->m_cloudMaterialProperties.m_phaseBackLobeG);
            m_shaderResourceGroup->SetConstant(m_phaseBackLobeWeightIndex, m_shaderConstantData->m_cloudMaterialProperties.m_phaseBackLobeWeight);
 

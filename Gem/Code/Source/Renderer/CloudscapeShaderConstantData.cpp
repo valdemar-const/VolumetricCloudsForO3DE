@@ -44,6 +44,16 @@ namespace VolumetricClouds
                 ->Field("CloudTopOffsetKm", &CloudscapeShaderConstantData::m_cloudTopOffsetKm)
                 ->Field("CloudEdgeSharpness", &CloudscapeShaderConstantData::m_cloudEdgeSharpness)
                 ->Field("CloudTopVariation", &CloudscapeShaderConstantData::m_cloudTopVariation)
+                ->Field("CloudBaseRoundness", &CloudscapeShaderConstantData::m_cloudBaseRoundness)
+                ->Field("StratusShare", &CloudscapeShaderConstantData::m_stratusShare)
+                ->Field("StratusBaseHeight", &CloudscapeShaderConstantData::m_stratusBaseHeight)
+                ->Field("StratusTopHeight", &CloudscapeShaderConstantData::m_stratusTopHeight)
+                ->Field("StratocumulusShare", &CloudscapeShaderConstantData::m_stratocumulusShare)
+                ->Field("StratocumulusBaseHeight", &CloudscapeShaderConstantData::m_stratocumulusBaseHeight)
+                ->Field("StratocumulusTopHeight", &CloudscapeShaderConstantData::m_stratocumulusTopHeight)
+                ->Field("CumulusShare", &CloudscapeShaderConstantData::m_cumulusShare)
+                ->Field("CumulusBaseHeight", &CloudscapeShaderConstantData::m_cumulusBaseHeight)
+                ->Field("CumulusTopHeight", &CloudscapeShaderConstantData::m_cumulusTopHeight)
                 ->Field("CloudMaterialProperties", &CloudscapeShaderConstantData::m_cloudMaterialProperties)
                 ;
 
@@ -115,6 +125,39 @@ namespace VolumetricClouds
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudTopVariation, "Cloud Top Variation", "Spread of cloud top heights. 0 puts every top at the weather map peak height, 1 lowers some tops to a quarter of it.")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudBaseRoundness, "Cloud Base Roundness", "0 gives a flat cloud base at one height, 1 gives a lumpy base that differs between neighbouring clouds.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                    ->EndGroup()
+                    ->ClassElement(AZ::Edit::ClassElements::Group, "Cloud Types")
+                        ->Attribute(AZ::Edit::Attributes::AutoExpand, true)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratusShare, "Stratus Share", "Relative share of the sky covered by stratus clouds. 0 disables this cloud type.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratusBaseHeight, "Stratus Base", "Base height of stratus clouds as a fraction of the cloud slab thickness.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratusTopHeight, "Stratus Top", "Top height of stratus clouds as a fraction of the cloud slab thickness.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratocumulusShare, "Stratocumulus Share", "Relative share of the sky covered by stratocumulus clouds. 0 disables this cloud type.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratocumulusBaseHeight, "Stratocumulus Base", "Base height of stratocumulus clouds as a fraction of the cloud slab thickness.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratocumulusTopHeight, "Stratocumulus Top", "Top height of stratocumulus clouds as a fraction of the cloud slab thickness.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cumulusShare, "Cumulus Share", "Relative share of the sky covered by cumulus clouds. 0 disables this cloud type.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cumulusBaseHeight, "Cumulus Base", "Base height of cumulus clouds as a fraction of the cloud slab thickness.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cumulusTopHeight, "Cumulus Top", "Top height of cumulus clouds as a fraction of the cloud slab thickness.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
                     ->EndGroup()
                     ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_cloudMaterialProperties, "Cloud Material Properties", "")
                     ;
@@ -143,6 +186,16 @@ namespace VolumetricClouds
                AZ::IsClose(m_cloudTopOffsetKm, rhs.m_cloudTopOffsetKm) &&
                AZ::IsClose(m_cloudEdgeSharpness, rhs.m_cloudEdgeSharpness) &&
                AZ::IsClose(m_cloudTopVariation, rhs.m_cloudTopVariation) &&
+               AZ::IsClose(m_cloudBaseRoundness, rhs.m_cloudBaseRoundness) &&
+               AZ::IsClose(m_stratusShare, rhs.m_stratusShare) &&
+               AZ::IsClose(m_stratusBaseHeight, rhs.m_stratusBaseHeight) &&
+               AZ::IsClose(m_stratusTopHeight, rhs.m_stratusTopHeight) &&
+               AZ::IsClose(m_stratocumulusShare, rhs.m_stratocumulusShare) &&
+               AZ::IsClose(m_stratocumulusBaseHeight, rhs.m_stratocumulusBaseHeight) &&
+               AZ::IsClose(m_stratocumulusTopHeight, rhs.m_stratocumulusTopHeight) &&
+               AZ::IsClose(m_cumulusShare, rhs.m_cumulusShare) &&
+               AZ::IsClose(m_cumulusBaseHeight, rhs.m_cumulusBaseHeight) &&
+               AZ::IsClose(m_cumulusTopHeight, rhs.m_cumulusTopHeight) &&
                (m_cloudMaterialProperties == rhs.m_cloudMaterialProperties)
                ;
     }

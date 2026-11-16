@@ -113,6 +113,13 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     float m_cloudEdgeSharpness;
     // Разброс высоты вершин облаков, 0..1.
     float m_cloudTopVariation;
+    // Скругление основания облаков, 0..1.
+    float m_cloudBaseRoundness;
+    // Доля, основание и вершина типов облаков: x - слоистые,
+    // y - слоисто-кучевые, z - кучевые.
+    float3 m_cloudTypeShare;
+    float3 m_cloudTypeBaseHeight;
+    float3 m_cloudTypeTopHeight;
 
     Texture2D<float2> m_depthStencilTexture;
     Sampler ClampPointSampler
@@ -326,23 +333,53 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
 
     const float4 weatherData = PassSrg::GetWeatherData(worldPosKm);
 
-    // Высоту основания сдвигают низкочастотным шумом на 0-12 % толщины слоя:
-    // иначе все облака начинаются на одной высоте и основание слоя
-    // выглядит ровным срезом.
-    const float baseHeightOffset = 0.12 * lowFreqFBM;
-    float shapeRemapBottom = saturate(Remap(heightFraction, baseHeightOffset, baseHeightOffset + 0.12, 0.0, 1.0));
+    // Тип облака выбирают по 2D шуму с ячейкой около 40 км: отрезок
+    // значений шума делят между типами пропорционально долям, на границах
+    // типы плавно смешивают. Тип с долей 0 не получает отрезка.
+    static const float TypeNoiseScalePerKm = 1.0 / 40.0;
+    static const float TypeBlend = 0.08;
+    const float3 typeShare = max(PassSrg::m_cloudTypeShare, 0.0);
+    const float typeShareSum = typeShare.x + typeShare.y + typeShare.z;
+    if (typeShareSum < 1e-4)
+    {
+        return 0.0;
+    }
+    const float typeNoise = saturate(Remap(PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
+        float3(worldPosKm.xy * TypeNoiseScalePerKm, 0.71), 3.0).b, 0.25, 0.75, 0.0, 1.0));
+    const float typeEdge0 = typeShare.x / typeShareSum;
+    const float typeEdge1 = (typeShare.x + typeShare.y) / typeShareSum;
+    float3 typeWeight;
+    typeWeight.x = 1.0 - smoothstep(typeEdge0 - TypeBlend, typeEdge0 + TypeBlend, typeNoise);
+    typeWeight.z = smoothstep(typeEdge1 - TypeBlend, typeEdge1 + TypeBlend, typeNoise);
+    typeWeight.y = saturate(1.0 - typeWeight.x - typeWeight.z);
+    typeWeight *= step(1e-4, typeShare);
+    typeWeight /= max(typeWeight.x + typeWeight.y + typeWeight.z, 1e-4);
+    const float typeBase = dot(typeWeight, saturate(PassSrg::m_cloudTypeBaseHeight));
+    const float typeTop = max(dot(typeWeight, saturate(PassSrg::m_cloudTypeTopHeight)), typeBase + 0.02);
+
     // Вершину опускают по 2D шуму Уорли с ячейкой в несколько км: у
     // соседних облаков разная высота, и верх слоя не выглядит ровным
     // срезом. Канал B карты погоды задаёт верхний предел высоты.
     static const float TopNoiseScalePerKm = 1.0 / 16.0;
     const float topNoise = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
         float3(worldPosKm.xy * TopNoiseScalePerKm, 0.37), 2.0).g;
+
+    // Основание сдвигают 3D шумом формы и 2D шумом вершин: соседние
+    // облака начинаются на разной высоте. Длинный линейный подъём формы
+    // у основания вместе с порогом покрытия даёт бугристый низ: где шум
+    // плотнее, облако опускается ниже. Короткий подъём даёт плоский срез.
+    const float baseRoundness = saturate(PassSrg::m_cloudBaseRoundness);
+    const float cloudThickness = typeTop - typeBase;
+    const float baseHeight = typeBase + baseRoundness * cloudThickness * (0.10 * lowFreqFBM + 0.08 * (1.0 - topNoise));
+    const float baseRampLength = cloudThickness * lerp(0.04, 0.2, baseRoundness);
+    float shapeRemapBottom = saturate(Remap(heightFraction, baseHeight, baseHeight + baseRampLength, 0.0, 1.0));
+
     const float topScale = lerp(1.0, lerp(0.25, 1.0, saturate(Remap(topNoise, 0.3, 0.8, 0.0, 1.0))),
         saturate(PassSrg::m_cloudTopVariation));
-    const float cloudMaxHeight = max(weatherData.b * topScale, baseHeightOffset + 0.15);
+    const float cloudMaxHeight = max(typeTop * weatherData.b * topScale, baseHeight + baseRampLength + 0.02);
     // Квадратичный спад к вершине даёт купол: середина облака остаётся
     // полной, форма сужается у самого верха.
-    const float topRamp = saturate(Remap(heightFraction, cloudMaxHeight * 0.20, cloudMaxHeight, 0.0, 1.0));
+    const float topRamp = saturate(Remap(heightFraction, lerp(baseHeight, cloudMaxHeight, 0.2), cloudMaxHeight, 0.0, 1.0));
     float shapeRemapTop = 1.0 - topRamp * topRamp;
     float shapeAltering = shapeRemapBottom * shapeRemapTop;
 
