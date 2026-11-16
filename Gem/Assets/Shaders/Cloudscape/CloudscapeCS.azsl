@@ -659,7 +659,7 @@ CloudTraceSample GetCloudColor(const float2 pixUV, const float2 pixLoc)
     const float farStepSizeKm = rayMarchDistanceKm / numSamples;
     const float nearStepSizeKm = min(0.025, farStepSizeKm);
     const float stepGrowthDistanceKm = 10.0;
-    const int maxIterations = 256;
+    const int maxIterations = 320;
 
     // Длина шага к солнцу не зависит от шага взгляда: иначе облако вблизи
     // камеры получает короткий теневой луч и выглядит пересвеченным.
@@ -699,7 +699,11 @@ CloudTraceSample GetCloudColor(const float2 pixUV, const float2 pixLoc)
         float stepSizeKm = lerp(nearStepSizeKm, farStepSizeKm, growth * growth);
         if (isEmptySpace)
         {
-            stepSizeKm *= 2.0;
+            // Луч вдоль слоя длиной 200-300 км получает шаг в несколько км и
+            // пропускает вершины облаков размером 1-2 км. Попадание зависит
+            // от сдвига старта, и у горизонта видно зерно. Шаг не больше
+            // 4 % расстояния: размер шага на экране постоянный.
+            stepSizeKm = min(stepSizeKm * 2.0, 0.05 + 0.04 * distanceFromCameraKm);
         }
         else
         {
