@@ -19,7 +19,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     static const float m_dualLobePhaseFunctionWeight = 0.75;
 
     // A number from 0 .. 15. Defines the pixel index
-    // within each 4x4 block that will be ray marched in this frame. 
+    // within each 2x2 block that will be ray marched in this frame. 
     uint m_pixelIndex4x4;
 
     // Used to scale world position XYZ when sampling
@@ -143,7 +143,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     // We write to only one of these two textures every other frame.
     RWTexture2D<float4> m_cloudscapeOut[2];
 
-    // Четверть разрешения: один сэмпл на блок 4x4.
+    // Один сэмпл на блок 2x2 (CloudBlockSize).
     RWTexture2D<uint4> m_cloudTraceOut;
 
     uint GetOutputTextureIndex()
@@ -587,7 +587,7 @@ bool GetCloudSlabIntersections(const float2 pixUV, inout AtmosphereIntersectionI
     }
 
     // Глубиной сцены марш не обрезают: один пиксель марша представляет
-    // блок 4x4, и край самолёта в блоке обрезал бы облака соседних пикселей.
+    // блок 2x2, и край самолёта в блоке обрезал бы облака соседних пикселей.
     // Облако за геометрией отсекает растровый проход по передней глубине.
     isCloudPixelBlocked = false;
     if (tEnd <= tStart)
@@ -701,6 +701,13 @@ CloudTraceSample GetCloudColor(const float2 pixUV, const float2 pixLoc)
         {
             stepSizeKm *= 2.0;
         }
+        else
+        {
+            // При ослаблении 20-40 км^-1 шаг в километр гасит луч за один
+            // сэмпл, и попадание по сдвигу старта меняется от кадра к кадру.
+            // Внутри облака шаг растёт медленнее: 105 м на 10 км, 425 м на 50 км.
+            stepSizeKm = min(stepSizeKm, 0.025 + 0.008 * distanceFromCameraKm);
+        }
 
         // Первый шаг сдвинут шумом на долю шага: сдвиг убирает полосы от
         // одинаковых для всех пикселей позиций сэмплов.
@@ -783,7 +790,7 @@ CloudTraceSample GetCloudColor(const float2 pixUV, const float2 pixLoc)
 }
 
 
-// Поток марширует один пиксель блока 4x4; положение пикселя в блоке
+// Поток марширует один пиксель блока 2x2; положение пикселя в блоке
 // меняется по кадрам. Остальные 15 пикселей восстанавливает проход
 // CloudscapeReprojectionCS из истории.
 [numthreads(8, 8, 1)]
@@ -799,7 +806,7 @@ void MainCS(uint3 thread_id: SV_DispatchThreadID)
 
     uint2 texDims;
     PassSrg::m_cloudscapeOut[0].GetDimensions(texDims.x, texDims.y);
-    const uint2 pixelLoc = min(blockLoc * 4 + GetTracedOffsetInBlock(PassSrg::m_pixelIndex4x4), texDims - 1);
+    const uint2 pixelLoc = min(blockLoc * CloudBlockSize + GetTracedOffsetInBlock(PassSrg::m_pixelIndex4x4), texDims - 1);
 
     const float2 pixelLocF = float2(pixelLoc);
     const float2 pixelUV = (pixelLocF + 0.5) / float2(texDims);

@@ -29,7 +29,7 @@ namespace VolumetricClouds
      *  The idea is that one of the attachments carries the pixel from the previous frame.
      *  while the other is the one we are going to write to in the current frame.
      *  When we are rendering to the current frame we only render to 1 of 16 pixels
-     *  in a 4x4 block.
+     *  in a 4x4 block. The fork marches 1 of 4 pixels in a 2x2 block.
      */
     class CloudscapeComputePass final
         : public AZ::RPI::ComputePass

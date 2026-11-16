@@ -68,6 +68,9 @@ namespace VolumetricClouds
         //! проход, если объём появился, исчез или сменился.
         void UpdateSkyVolumeLUT();
 
+        //! Пишет в журнал время GPU проходов, если включена r_cloudscapeGpuTiming.
+        void LogGpuTiming();
+
         //////////////////////////////////////////////////////////////////
         //! AZ::RPI::FeatureProcessor overrides START...
         void Activate() override;
@@ -86,7 +89,7 @@ namespace VolumetricClouds
         // in cloudscape rendering these attachments become "Imported" attachments.
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudOutput0;
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudOutput1;
-        // Сэмплы марша: один на блок 4x4 пикселей.
+        // Сэмплы марша: один на блок 2x2 пикселей.
         AZ::Data::Instance<AZ::RPI::AttachmentImage> m_cloudTrace;
 
         // Объём 32^3 гема SkyAtmosphere: дымка и пропускание по глубине кадра.

@@ -31,7 +31,7 @@ uint GetTransformed4x4PixelIndex(uint pixelIndex4x4)
     return CROSSED_PATTERN[pixelIndex4x4];
 }
 
-// Сэмпл марша четверти разрешения: цвет, непрозрачность и две глубины
+// Сэмпл марша для блока 2x2: цвет, непрозрачность и две глубины
 // облака в км, упакованные в half. Передняя глубина отсекает облако
 // за геометрией, средняя по пропусканию переносит историю.
 struct CloudTraceSample
@@ -58,9 +58,16 @@ CloudTraceSample UnpackCloudTrace(uint4 p)
     return s;
 }
 
-// Положение пикселя марша внутри блока 4x4 для номера кадра 0..15.
+// Марш считает один пиксель блока 2x2 за кадр: пиксель обновляется
+// раз в 4 кадра. При блоке 4x4 обновление раз в 16 кадров в полёте
+// не успевает за сдвигом облаков на экране, и изображение рябит.
+static const int CloudBlockShift = 1;
+static const int CloudBlockSize = 1 << CloudBlockShift;
+
+// Положение пикселя марша внутри блока 2x2 для номера кадра 0..15.
+// Диагональный порядок 0, 3, 1, 2 разносит соседние кадры по блоку.
 uint2 GetTracedOffsetInBlock(uint frameIndex16)
 {
-    const uint idx = GetTransformed4x4PixelIndex(frameIndex16);
-    return uint2(idx & 3, idx >> 2);
+    static const uint2 PATTERN_2X2[4] = { uint2(0, 0), uint2(1, 1), uint2(1, 0), uint2(0, 1) };
+    return PATTERN_2X2[frameIndex16 & 3];
 }

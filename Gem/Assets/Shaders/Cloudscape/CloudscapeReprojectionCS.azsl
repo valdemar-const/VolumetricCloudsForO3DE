@@ -15,7 +15,7 @@
 
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
-    // Номер кадра 0..15: задаёт пиксель марша в блоке 4x4 и чётность
+    // Номер кадра 0..15: задаёт пиксель марша в блоке 2x2 и чётность
     // текстуры истории.
     uint m_pixelIndex4x4;
 
@@ -29,9 +29,11 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 
 // Доля нового сэмпла для пикселя марша. Меньшее значение сильнее
 // усредняет сдвиг старта луча, но дольше тянет шлейф при движении.
-static const float TracedPixelBlend = 0.3;
+static const float TracedPixelBlend = 0.2;
 // Доля интерполированного сэмпла для остальных пикселей блока.
-static const float UpsampledPixelBlend = 0.05;
+static const float UpsampledPixelBlend = 0.1;
+// Ширина границ истории в сигмах сэмплов соседних блоков.
+static const float HistoryClipSigma = 1.25;
 
 float4 LoadTraceColor(int2 traceLoc, int2 traceDims)
 {
@@ -78,27 +80,33 @@ void MainCS(uint3 thread_id: SV_DispatchThreadID)
     const uint previousIndex = 1 - currentIndex;
 
     const int2 tracedOffset = int2(GetTracedOffsetInBlock(PassSrg::m_pixelIndex4x4));
-    const int2 blockLoc = min(pixelLoc >> 2, traceDims - 1);
-    const bool isTracedPixel = all(pixelLoc == blockLoc * 4 + tracedOffset);
+    const int2 blockLoc = min(pixelLoc >> CloudBlockShift, traceDims - 1);
+    const bool isTracedPixel = all(pixelLoc == blockLoc * CloudBlockSize + tracedOffset);
 
     const CloudTraceSample center = UnpackCloudTrace(PassSrg::m_cloudTrace.Load(int3(blockLoc, 0)));
 
-    // Границы значений истории: сэмплы этого кадра в блоках 3x3.
-    float4 minColor = center.m_color;
-    float4 maxColor = center.m_color;
+    // Границы значений истории: среднее +- 1.25 сигмы сэмплов этого кадра
+    // в блоках 3x3 (Salvi 2016). Границы min/max расширяет любой шумный
+    // сэмпл, и шум проходит в историю; границы по сигме уже.
+    float4 moment1 = 0.0;
+    float4 moment2 = 0.0;
     [unroll] for (int y = -1; y <= 1; ++y)
     {
         [unroll] for (int x = -1; x <= 1; ++x)
         {
             const float4 c = LoadTraceColor(blockLoc + int2(x, y), traceDims);
-            minColor = min(minColor, c);
-            maxColor = max(maxColor, c);
+            moment1 += c;
+            moment2 += c * c;
         }
     }
+    moment1 /= 9.0;
+    const float4 sigma = sqrt(max(moment2 / 9.0 - moment1 * moment1, 0.0));
+    const float4 minColor = moment1 - HistoryClipSigma * sigma;
+    const float4 maxColor = moment1 + HistoryClipSigma * sigma;
 
     // Интерполяция сэмплов этого кадра в точке пикселя: сэмпл блока
-    // лежит в пикселе blockLoc * 4 + tracedOffset.
-    const float2 tracePos = (float2(pixelLoc - tracedOffset)) / 4.0;
+    // лежит в пикселе blockLoc * CloudBlockSize + tracedOffset.
+    const float2 tracePos = (float2(pixelLoc - tracedOffset)) / float(CloudBlockSize);
     const int2 t0 = int2(floor(tracePos));
     const float2 tf = tracePos - float2(t0);
     const float4 upsampled = lerp(

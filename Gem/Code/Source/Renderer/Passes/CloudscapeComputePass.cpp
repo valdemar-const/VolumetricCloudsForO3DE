@@ -90,7 +90,7 @@ namespace VolumetricClouds
         const auto traceImageAttachment = cloudscapeFeatureProcessor->GetTraceImageAttachment();
         SetImageAttachmentBinding(2, traceImageAttachment);
 
-        // Один поток на блок 4x4: остальные пиксели заполняет проход репроекции.
+        // Один поток на блок 2x2: остальные пиксели заполняет проход репроекции.
         const auto traceSize = traceImageAttachment->GetDescriptor().m_size;
         SetTargetThreadCounts(traceSize.m_width, traceSize.m_height, 1);
     }

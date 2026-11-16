@@ -51,7 +51,7 @@ ShaderResourceGroup PassSrg : SRG_PerPass
 }
 
 // Ширина перехода у передней границы облака: край облака у геометрии
-// без перехода мерцает из-за глубины в четверти разрешения.
+// без перехода мерцает из-за глубины по блокам 2x2.
 static const float OcclusionFadeKm = 0.3;
 
 // Постоянные гема SkyAtmosphere: SKY_VOLUME_SLICE_COUNT, SKY_VOLUME_KM_PER_SLICE
@@ -72,7 +72,7 @@ PSOutput MainPS(VSOutput IN)
     // по передней глубине облака.
     uint2 traceDims;
     PassSrg::m_cloudTrace.GetDimensions(traceDims.x, traceDims.y);
-    const int2 blockLoc = min(pixelLoc.xy >> 2, int2(traceDims) - 1);
+    const int2 blockLoc = min(pixelLoc.xy >> CloudBlockShift, int2(traceDims) - 1);
     const CloudTraceSample trace = UnpackCloudTrace(PassSrg::m_cloudTrace.Load(int3(blockLoc, 0)));
 
     uint2 texDims;

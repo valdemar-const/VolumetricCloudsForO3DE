@@ -5,6 +5,7 @@
 *
 */
 
+#include <AzCore/Console/IConsole.h>
 #include <AzCore/Name/NameDictionary.h>
 
 #include <Atom/RHI/DrawPacketBuilder.h>
@@ -32,6 +33,9 @@
 
 namespace VolumetricClouds
 {
+    AZ_CVAR(bool, r_cloudscapeGpuTiming, false, nullptr, AZ::ConsoleFunctorFlags::Null,
+        "Log GPU time of the cloudscape passes every 120 frames.");
+
     void CloudscapeFeatureProcessor::Reflect(AZ::ReflectContext* context)
     {
         if (auto* serializeContext = azrtti_cast<AZ::SerializeContext*>(context))
@@ -84,9 +88,30 @@ namespace VolumetricClouds
             passSrg->SetConstant(m_pixelIndex4x4Index, pixelIndex4x4);
 
             m_cloudscapeRenderPass->UpdateFrameCounter(m_frameCounter);
+
+            LogGpuTiming();
             
             m_frameCounter++;
         }
+    }
+
+    void CloudscapeFeatureProcessor::LogGpuTiming()
+    {
+        AZ::RPI::Pass* passes[] = { m_cloudscapeComputePass, m_cloudscapeReprojectionPass, m_cloudscapeRenderPass };
+        for (AZ::RPI::Pass* pass : passes)
+        {
+            if (pass->IsTimestampQueryEnabled() != static_cast<bool>(r_cloudscapeGpuTiming))
+            {
+                pass->SetTimestampQueryEnabled(r_cloudscapeGpuTiming);
+            }
+        }
+        if (!r_cloudscapeGpuTiming || (m_frameCounter % 120) != 0)
+        {
+            return;
+        }
+        auto toMs = [](AZ::RPI::Pass* pass) { return pass->GetLatestTimestampResult().GetDurationInNanoseconds() * 1.0e-6; };
+        AZ_Info("Cloudscape", "GPU ms: march %.3f, reprojection %.3f, raster %.3f\n",
+            toMs(m_cloudscapeComputePass), toMs(m_cloudscapeReprojectionPass), toMs(m_cloudscapeRenderPass));
     }
 
     void CloudscapeFeatureProcessor::AddRenderPasses([[maybe_unused]] AZ::RPI::RenderPipeline* renderPipeline)
@@ -192,7 +217,7 @@ namespace VolumetricClouds
 
         // Цвет и глубины упакованы в half: CloudscapeCommon.azsli PackCloudTrace.
         const AZStd::string traceName = AZStd::string::format("CloudscapeTrace_%u", m_attachmentGeneration);
-        const AzFramework::WindowSize traceSize{ (m_viewportSize.m_width + 3) / 4, (m_viewportSize.m_height + 3) / 4 };
+        const AzFramework::WindowSize traceSize{ (m_viewportSize.m_width + 1) / 2, (m_viewportSize.m_height + 1) / 2 };
         m_cloudTrace = CreateCloudscapeOutputAttachment(AZ::Name(traceName), traceSize, AZ::RHI::Format::R32G32B32A32_UINT);
         AZ_Assert(!!m_cloudTrace, "Failed to create %s", traceName.c_str());
     }
