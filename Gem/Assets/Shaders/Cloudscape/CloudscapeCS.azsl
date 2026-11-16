@@ -316,7 +316,11 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
 
     const float4 weatherData = PassSrg::GetWeatherData(worldPosKm);
 
-    float shapeRemapBottom = saturate(Remap(heightFraction, 0.0, 0.070, 0.0, 1.0));
+    // Высоту основания сдвигают низкочастотным шумом на 0-12 % толщины слоя:
+    // иначе все облака начинаются на одной высоте и основание слоя
+    // выглядит ровным срезом.
+    const float baseHeightOffset = 0.12 * lowFreqFBM;
+    float shapeRemapBottom = saturate(Remap(heightFraction, baseHeightOffset, baseHeightOffset + 0.12, 0.0, 1.0));
     const float cloudMaxHeight = weatherData.b;
     float shapeRemapTop = saturate(Remap(heightFraction, cloudMaxHeight * 0.20, cloudMaxHeight, 1.0, 0.0));
     float shapeAltering = shapeRemapBottom * shapeRemapTop;
@@ -335,7 +339,13 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
     {
         // FIXME: We sample "gba" instead of "rgba" because "r" channel contains perlin worley noise, and we only
         // need the worley noise. 
-        const float3 highFreqNoise = PassSrg::m_highFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, uvw, max(mipLevel - 2.0, 0.0)).gba;
+        // Детальный шум берут с частотой в 3 раза выше формы и сдвигают
+        // каналами низкочастотного шума: сдвиг заменяет curl-шум и ломает
+        // повтор детали вдоль границы облака.
+        static const float DetailFrequencyScale = 3.0;
+        static const float DetailDistortion = 0.15;
+        const float3 detailUvw = uvw * DetailFrequencyScale + (lowFreqNoises.gba - 0.5) * DetailDistortion;
+        const float3 highFreqNoise = PassSrg::m_highFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, detailUvw, max(mipLevel - 0.5, 0.0)).gba;
         const float highFreqFBM = highFreqNoise.r * 0.625
                      + highFreqNoise.g * 0.25
                      + highFreqNoise.b * 0.125;
