@@ -34,6 +34,8 @@ namespace VolumetricClouds
                 ->Field("AbsorptionCoefficent", &CloudMaterialProperties::m_absorptionCoefficient)
                 ->Field("ScatteringCoefficient", &CloudMaterialProperties::m_scatteringCoefficient)
                 ->Field("HenyeyGreensteinG", &CloudMaterialProperties::m_henyeyGreensteinG)
+                ->Field("PhaseBackLobeG", &CloudMaterialProperties::m_phaseBackLobeG)
+                ->Field("PhaseBackLobeWeight", &CloudMaterialProperties::m_phaseBackLobeWeight)
                 ->Field("AttenuationA", &CloudMaterialProperties::m_multiScatteringA)
                 ->Field("ContributionB", &CloudMaterialProperties::m_multiScatteringB)
                 ->Field("ExcentricityAttenuationC", &CloudMaterialProperties::m_multiScatteringC)
@@ -56,6 +58,12 @@ namespace VolumetricClouds
                         ->Attribute(AZ::Edit::Attributes::Max, 0.1)
                     ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudMaterialProperties::m_henyeyGreensteinG, "Excentricity", "Excentricity constant, g, in HenyeyGreenstein phase function. Typically 0.2. The closer to 1.0 the more forward scattering.")
                         ->Attribute(AZ::Edit::Attributes::Min, -1.0)
+                        ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                    ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudMaterialProperties::m_phaseBackLobeG, "Back Lobe Excentricity", "Excentricity g of the backward Henyey-Greenstein lobe. Negative values scatter light back towards the sun.")
+                        ->Attribute(AZ::Edit::Attributes::Min, -1.0)
+                        ->Attribute(AZ::Edit::Attributes::Max, 0.0)
+                    ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudMaterialProperties::m_phaseBackLobeWeight, "Back Lobe Weight", "Share of the backward lobe in the dual-lobe phase function. Lower values give a brighter silver lining when looking towards the sun.")
+                        ->Attribute(AZ::Edit::Attributes::Min, 0.0)
                         ->Attribute(AZ::Edit::Attributes::Max, 1.0)
                     ->ClassElement(AZ::Edit::ClassElements::Group, "Multiple Scattering Constants")
                     ->Attribute(AZ::Edit::Attributes::AutoExpand, true)
@@ -96,6 +104,8 @@ namespace VolumetricClouds
         return AZ::IsClose(m_absorptionCoefficient, rhs.m_absorptionCoefficient) &&
                AZ::IsClose(m_scatteringCoefficient, rhs.m_scatteringCoefficient) &&
                AZ::IsClose(m_henyeyGreensteinG, rhs.m_henyeyGreensteinG) &&
+               AZ::IsClose(m_phaseBackLobeG, rhs.m_phaseBackLobeG) &&
+               AZ::IsClose(m_phaseBackLobeWeight, rhs.m_phaseBackLobeWeight) &&
                AZ::IsClose(m_multiScatteringA, rhs.m_multiScatteringA) &&
                AZ::IsClose(m_multiScatteringB, rhs.m_multiScatteringB) &&
                AZ::IsClose(m_multiScatteringC, rhs.m_multiScatteringC)

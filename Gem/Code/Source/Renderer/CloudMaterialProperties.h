@@ -45,6 +45,12 @@ namespace VolumetricClouds
         // The closer it is to -1.0 the more backward scattering.
         float m_henyeyGreensteinG = 0.2f;
 
+        // Обратный лепесток фазы освещает облако при взгляде от солнца.
+        // Малый вес обратного лепестка усиливает серебристый край облака
+        // при взгляде на солнце.
+        float m_phaseBackLobeG = -0.05f;
+        float m_phaseBackLobeWeight = 0.75f;
+
         // These are the a, b, c coefficients that will be used
         // to modulate each multi scaterring octave of light contribution
         // as proposed in the paper "Oz: The Great and Volumetric"

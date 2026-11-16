@@ -43,6 +43,7 @@ namespace VolumetricClouds
                 ->Field("WindDirection", &CloudscapeShaderConstantData::m_windDirection)
                 ->Field("CloudTopOffsetKm", &CloudscapeShaderConstantData::m_cloudTopOffsetKm)
                 ->Field("CloudEdgeSharpness", &CloudscapeShaderConstantData::m_cloudEdgeSharpness)
+                ->Field("CloudTopVariation", &CloudscapeShaderConstantData::m_cloudTopVariation)
                 ->Field("CloudMaterialProperties", &CloudscapeShaderConstantData::m_cloudMaterialProperties)
                 ;
 
@@ -82,7 +83,7 @@ namespace VolumetricClouds
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_sunLightIntensity, "Sun Light Intensity", "A scaling factor to the color of the sun light.")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 100.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_ambientLightColor, "Ambient Light Color", "The ambient light color, which will be modulated by the Sun Light Color.")
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_ambientLightColor, "Ambient Light Color", "Sky light color for the shaded side of the clouds. The sun color does not tint it.")
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_ambientLightIntensity, "Ambient Light Intensity", "A scaling factor to the color of the ambient light. It will be modulated by the Sun Light Intensity.")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 10.0)
@@ -111,6 +112,9 @@ namespace VolumetricClouds
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudEdgeSharpness, "Cloud Edge Sharpness", "Narrows the density ramp at cloud edges. 1 gives wide semi-transparent fringes, 4 gives crisp cumulus edges.")
                             ->Attribute(AZ::Edit::Attributes::Min, 1.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 16.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudTopVariation, "Cloud Top Variation", "Spread of cloud top heights. 0 puts every top at the weather map peak height, 1 lowers some tops to a quarter of it.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
                     ->EndGroup()
                     ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_cloudMaterialProperties, "Cloud Material Properties", "")
                     ;
@@ -138,6 +142,7 @@ namespace VolumetricClouds
                m_windDirection.IsClose(rhs.m_windDirection) &&
                AZ::IsClose(m_cloudTopOffsetKm, rhs.m_cloudTopOffsetKm) &&
                AZ::IsClose(m_cloudEdgeSharpness, rhs.m_cloudEdgeSharpness) &&
+               AZ::IsClose(m_cloudTopVariation, rhs.m_cloudTopVariation) &&
                (m_cloudMaterialProperties == rhs.m_cloudMaterialProperties)
                ;
     }

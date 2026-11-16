@@ -61,7 +61,7 @@ namespace VolumetricClouds
 
         AZ::Vector3 m_sunColor = { 1.0f, 1.0f, 1.0f }; // DO NOT REFLECT (comes from an entity)
         float m_sunLightIntensity = 1.0f;
-        AZ::Color m_ambientLightColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+        AZ::Color m_ambientLightColor = { 0.55f, 0.7f, 1.0f, 1.0f };
         float m_ambientLightIntensity = 1.0f;
         // The shader expects a normalized vector.
         AZ::Vector3 m_directionTowardsTheSun = {0.0f, 0.0f, 1.0f}; // DO NOT REFLECT (comes from an entity)
@@ -89,6 +89,10 @@ namespace VolumetricClouds
         // Сужает переход плотности на краю облака: при 1 край полупрозрачный
         // шириной в сотни метров, при 4 край кучевого облака чёткий.
         float m_cloudEdgeSharpness = 4.0;
+        // Разброс высоты вершин. При 0 все вершины лежат на высоте из
+        // канала B карты погоды; при 1 часть вершин опускается до четверти
+        // этой высоты.
+        float m_cloudTopVariation = 0.6f;
         // An RGBA Texture with weather map data. Info per channel:
         // R: Low coverage map.
         // G: High coverage map. Kicks in when @m_globalCloudCoverage > 0.5.

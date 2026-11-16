@@ -161,6 +161,9 @@ namespace VolumetricClouds
            m_shaderResourceGroup->SetConstant(m_windDirectionIndex, windDirection);
            m_shaderResourceGroup->SetConstant(m_cloudTopOffsetKmIndex, m_shaderConstantData->m_cloudTopOffsetKm);
            m_shaderResourceGroup->SetConstant(m_cloudEdgeSharpnessIndex, m_shaderConstantData->m_cloudEdgeSharpness);
+           m_shaderResourceGroup->SetConstant(m_cloudTopVariationIndex, m_shaderConstantData->m_cloudTopVariation);
+           m_shaderResourceGroup->SetConstant(m_phaseBackLobeGIndex, m_shaderConstantData->m_cloudMaterialProperties.m_phaseBackLobeG);
+           m_shaderResourceGroup->SetConstant(m_phaseBackLobeWeightIndex, m_shaderConstantData->m_cloudMaterialProperties.m_phaseBackLobeWeight);
 
            m_shaderResourceGroup->SetImage(m_lowFreqNoiseTextureImageIndex, m_shaderConstantData->m_lowFrequencyNoiseTexture);
            m_shaderResourceGroup->SetImage(m_highFreqNoiseTextureImageIndex, m_shaderConstantData->m_highFrequencyNoiseTexture);

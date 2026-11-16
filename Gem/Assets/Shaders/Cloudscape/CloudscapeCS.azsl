@@ -15,9 +15,6 @@
 
 ShaderResourceGroup PassSrg : SRG_PerPass
 {
-    // FIXME: Make this a shader constant in the range 0 to 1
-    static const float m_dualLobePhaseFunctionWeight = 0.75;
-
     // A number from 0 .. 15. Defines the pixel index
     // within each 2x2 block that will be ray marched in this frame. 
     uint m_pixelIndex4x4;
@@ -88,6 +85,9 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     // Excentricity constant in HenyeyGreenstein phase function. Typically 0.2.
     // A number between [-1,1]. The bigger it is the more forward scattering.
     float m_henyeyGreensteinG;// = 0.2; 
+    // Эксцентриситет и вес обратного лепестка двухлепестковой фазы.
+    float m_phaseBackLobeG;
+    float m_phaseBackLobeWeight;
 
     // These are the a, b, c coefficients that will be used
     // to modulate each multi scaterring octave of light contribution
@@ -111,6 +111,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     float m_cloudTopOffsetKm;
     // Во сколько раз сужен переход плотности на краю облака.
     float m_cloudEdgeSharpness;
+    // Разброс высоты вершин облаков, 0..1.
+    float m_cloudTopVariation;
 
     Texture2D<float2> m_depthStencilTexture;
     Sampler ClampPointSampler
@@ -211,12 +213,14 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     // коэффициент рассеяния, как свет солнца; тогда в толще облака
     // яркость стремится к яркости неба, а не к ambient / ослабление.
     // Основание видит тёмную землю и нижнюю часть облака, поэтому
-    // получает треть яркости вершины.
+    // получает треть яркости вершины. Цвет неба не умножают на цвет
+    // солнца: тень облака голубая от неба, а не серая. Яркость следует
+    // за яркостью солнца, иначе тень не меняется при смене экспозиции.
     float3 GetAmbientLightColor(float heightFraction)
     {
         static const float AmbientRadianceScale = 0.08;
-        const float4 ambientColorAndIntensity = m_ambientLightColorAndIntensity * m_sunColorAndIntensity;
-        const float3 ambientColor = ambientColorAndIntensity.rgb * ambientColorAndIntensity.a * AmbientRadianceScale;
+        const float3 ambientColor = m_ambientLightColorAndIntensity.rgb
+            * (m_ambientLightColorAndIntensity.a * m_sunColorAndIntensity.a * AmbientRadianceScale);
         return m_sCoef * lerp(ambientColor * 0.33, ambientColor, saturate(heightFraction));
     }
 
@@ -274,10 +278,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     float CalcDualLobePhaseFunction(float3 viewDirection, float excentricityAttenuationOctave)
     {
         const float forwardPhase = CalcHenyeyGreenstein(viewDirection, excentricityAttenuationOctave * m_henyeyGreensteinG);
-        // FIXME: Add backward constant.
-        const float backwardG = -m_henyeyGreensteinG * 0.25;
-        const float backwardPhase = CalcHenyeyGreenstein(viewDirection, excentricityAttenuationOctave * backwardG);
-        return lerp(forwardPhase, backwardPhase, m_dualLobePhaseFunctionWeight);
+        const float backwardPhase = CalcHenyeyGreenstein(viewDirection, excentricityAttenuationOctave * m_phaseBackLobeG);
+        return lerp(forwardPhase, backwardPhase, saturate(m_phaseBackLobeWeight));
     }
 }
 
@@ -329,8 +331,19 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
     // выглядит ровным срезом.
     const float baseHeightOffset = 0.12 * lowFreqFBM;
     float shapeRemapBottom = saturate(Remap(heightFraction, baseHeightOffset, baseHeightOffset + 0.12, 0.0, 1.0));
-    const float cloudMaxHeight = weatherData.b;
-    float shapeRemapTop = saturate(Remap(heightFraction, cloudMaxHeight * 0.20, cloudMaxHeight, 1.0, 0.0));
+    // Вершину опускают по 2D шуму Уорли с ячейкой в несколько км: у
+    // соседних облаков разная высота, и верх слоя не выглядит ровным
+    // срезом. Канал B карты погоды задаёт верхний предел высоты.
+    static const float TopNoiseScalePerKm = 1.0 / 16.0;
+    const float topNoise = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
+        float3(worldPosKm.xy * TopNoiseScalePerKm, 0.37), 2.0).g;
+    const float topScale = lerp(1.0, lerp(0.25, 1.0, saturate(Remap(topNoise, 0.3, 0.8, 0.0, 1.0))),
+        saturate(PassSrg::m_cloudTopVariation));
+    const float cloudMaxHeight = max(weatherData.b * topScale, baseHeightOffset + 0.15);
+    // Квадратичный спад к вершине даёт купол: середина облака остаётся
+    // полной, форма сужается у самого верха.
+    const float topRamp = saturate(Remap(heightFraction, cloudMaxHeight * 0.20, cloudMaxHeight, 0.0, 1.0));
+    float shapeRemapTop = 1.0 - topRamp * topRamp;
     float shapeAltering = shapeRemapBottom * shapeRemapTop;
 
 
