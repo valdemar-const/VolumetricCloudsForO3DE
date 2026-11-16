@@ -42,7 +42,7 @@ namespace VolumetricClouds
                         ->Attribute(AZ::Edit::Attributes::Visibility, AZ::Edit::PropertyVisibility::Show)
                         ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeComponentConfig::m_lowFreqTextureEntity, "Low Frequency Texture Entity", "An entity that provides a, typically 128x128x128, Texture3D for sampling low frequency cloud-like data.")
                         ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeComponentConfig::m_highFreqTextureEntity, "High Frequency Texture Entity", "An entity that provides a, typically 32x32x32, Texture3D for sampling high frequency cloud-like data.")
-                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeComponentConfig::m_weatherMap, "Weather Map", "4-channels weather map data.")
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeComponentConfig::m_weatherMap, "Weather Map", "Optional painted cloud map. Without it the cloud layers spread clouds procedurally. R: cover (black clear, mid-grey the layer cover, white twice the cover), B: share of layer thickness, A: density (mid-grey keeps the layer density).")
                         ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeComponentConfig::m_sunEntity, "Sun Entity", "An entity with a Directional Light Component, representing the Sun. Defines sun light direction and color.")
                         ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeComponentConfig::m_shaderConstantData, "Shader Constants", "")
                         ;
@@ -260,6 +260,13 @@ namespace VolumetricClouds
                 }
                 AZ::Data::AssetBus::Handler::BusConnect(weatherMapAssetId);
                 m_configuration.m_weatherMap.QueueLoad();
+            }
+            else if (!weatherMapAssetId.IsValid() && prevWeatherMapAssetId.IsValid())
+            {
+                // Карта погоды необязательна: без неё покрытие задают слои.
+                AZ::Data::AssetBus::Handler::BusDisconnect();
+                m_configuration.m_shaderConstantData.m_weatherMap.reset();
+                doUpdate = true;
             }
 
             if (m_cloudscapeFeatureProcessor)
@@ -536,9 +543,14 @@ namespace VolumetricClouds
             SubmitShaderConstantData();
         }
 
+        // Слой облаков охватывает включённые слои типов облаков. Сеттеры
+        // слоя действуют, только когда все слои типов выключены.
         float CloudscapeComponentController::GetDistanceToCloudSlabKm()
         {
-            return m_configuration.m_shaderConstantData.m_cloudSlabDistanceAboveSeaLevelKm;
+            float baseKm = 0.0f;
+            float thicknessKm = 0.0f;
+            m_configuration.m_shaderConstantData.GetEffectiveSlab(baseKm, thicknessKm);
+            return baseKm;
         }
 
         void CloudscapeComponentController::SetDistanceToCloudSlabKm(float distanceKm)
@@ -549,7 +561,10 @@ namespace VolumetricClouds
 
         float CloudscapeComponentController::GetCloudSlabThicknessKm()
         {
-            return m_configuration.m_shaderConstantData.m_cloudSlabThicknessKm;
+            float baseKm = 0.0f;
+            float thicknessKm = 0.0f;
+            m_configuration.m_shaderConstantData.GetEffectiveSlab(baseKm, thicknessKm);
+            return thicknessKm;
         }
 
         void CloudscapeComponentController::SetCloudSlabThicknessKm(float thicknessKm)

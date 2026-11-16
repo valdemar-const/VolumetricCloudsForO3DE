@@ -88,17 +88,17 @@ namespace VolumetricClouds
         AZ::RHI::ShaderInputNameIndex m_directionTowardsTheSunIndex = "m_directionTowardsTheSun";
 
         AZ::RHI::ShaderInputNameIndex m_weatherMapSizeKmIndex = "m_weatherMapSizeKm";
-        AZ::RHI::ShaderInputNameIndex m_globalCloudCoverageIndex = "m_globalCloudCoverage";
-        AZ::RHI::ShaderInputNameIndex m_globalCloudDensityIndex = "m_globalCloudDensity";
+        AZ::RHI::ShaderInputNameIndex m_weatherMapInfluenceIndex = "m_weatherMapInfluence";
         AZ::RHI::ShaderInputNameIndex m_windSpeedKmPerSecIndex = "m_windSpeedKmPerSec";
         AZ::RHI::ShaderInputNameIndex m_windDirectionIndex = "m_windDirection";
         AZ::RHI::ShaderInputNameIndex m_cloudTopOffsetKmIndex = "m_cloudTopOffsetKm";
         AZ::RHI::ShaderInputNameIndex m_cloudEdgeSharpnessIndex = "m_cloudEdgeSharpness";
-        AZ::RHI::ShaderInputNameIndex m_cloudTopVariationIndex = "m_cloudTopVariation";
-        AZ::RHI::ShaderInputNameIndex m_cloudBaseRoundnessIndex = "m_cloudBaseRoundness";
-        AZ::RHI::ShaderInputNameIndex m_cloudTypeShareIndex = "m_cloudTypeShare";
-        AZ::RHI::ShaderInputNameIndex m_cloudTypeBaseHeightIndex = "m_cloudTypeBaseHeight";
-        AZ::RHI::ShaderInputNameIndex m_cloudTypeTopHeightIndex = "m_cloudTypeTopHeight";
+        AZ::RHI::ShaderInputNameIndex m_stratusLayerIndex = "m_stratusLayer";
+        AZ::RHI::ShaderInputNameIndex m_stratusShapeIndex = "m_stratusShape";
+        AZ::RHI::ShaderInputNameIndex m_stratocumulusLayerIndex = "m_stratocumulusLayer";
+        AZ::RHI::ShaderInputNameIndex m_stratocumulusShapeIndex = "m_stratocumulusShape";
+        AZ::RHI::ShaderInputNameIndex m_cumulusLayerIndex = "m_cumulusLayer";
+        AZ::RHI::ShaderInputNameIndex m_cumulusShapeIndex = "m_cumulusShape";
         AZ::RHI::ShaderInputNameIndex m_phaseBackLobeGIndex = "m_phaseBackLobeG";
         AZ::RHI::ShaderInputNameIndex m_phaseBackLobeWeightIndex = "m_phaseBackLobeWeight";
 

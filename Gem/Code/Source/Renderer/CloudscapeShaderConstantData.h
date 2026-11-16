@@ -14,6 +14,7 @@
 #include <Atom/RPI.Reflect/Image/Image.h>
 
 #include <Renderer/CloudMaterialProperties.h>
+#include <Renderer/CloudLayers.h>
 
 namespace VolumetricClouds
 {
@@ -73,14 +74,8 @@ namespace VolumetricClouds
         // The weather map is a texture representing a squared area.
         // The length of each side of the square is measured in kilometers.
         float m_weatherMapSizeKm = 60.0;
-        // This variable is the knob that controls cloud coverage between
-        // The Red Channel (Low coverage) and the Green channel (High coverage).
-        // When this parameter is less than 0.5 then the Red Channel determines
-        // the coverage. Above 0.5, the Green Channel rapidly becomes the dominant
-        // coverage.
-        float m_globalCloudCoverage = 0.75;
-        // This knob modulates the global density of the clouds.
-        float m_globalCloudDensity = 1.0;
+        float m_globalCloudCoverage = 0.75; // Не используют: покрытие задают слои.
+        float m_globalCloudDensity = 1.0; // Не используют: плотность задают слои.
         float m_windSpeedKmPerSec = 0.0;
         AZ::Vector3 m_windDirection = { 1.0f, 1.0f, 0.0f };
         // Pushes the top of the clouds along the wind direction by this
@@ -89,31 +84,22 @@ namespace VolumetricClouds
         // Сужает переход плотности на краю облака: при 1 край полупрозрачный
         // шириной в сотни метров, при 4 край кучевого облака чёткий.
         float m_cloudEdgeSharpness = 4.0;
-        // Разброс высоты вершин. При 0 все вершины лежат на высоте из
-        // канала B карты погоды; при 1 часть вершин опускается до четверти
-        // этой высоты.
-        float m_cloudTopVariation = 0.6f;
-        // Скругление основания: 0 даёт плоское основание на одной высоте,
-        // 1 - основание с буграми и разной высотой у соседних облаков.
-        float m_cloudBaseRoundness = 0.7f;
 
-        // Типы облаков. Доля задаёт относительную площадь неба под типом,
-        // 0 отключает тип; при всех долях 0 облаков нет. Основание и вершина
-        // заданы долей толщины слоя облаков.
-        float m_stratusShare = 0.0f;
-        float m_stratusBaseHeight = 0.0f;
-        float m_stratusTopHeight = 0.12f;
-        float m_stratocumulusShare = 0.2f;
-        float m_stratocumulusBaseHeight = 0.03f;
-        float m_stratocumulusTopHeight = 0.35f;
-        float m_cumulusShare = 0.8f;
-        float m_cumulusBaseHeight = 0.03f;
-        float m_cumulusTopHeight = 1.0f;
-        // An RGBA Texture with weather map data. Info per channel:
-        // R: Low coverage map.
-        // G: High coverage map. Kicks in when @m_globalCloudCoverage > 0.5.
-        // B: Peak height.
-        // A: density
+        // Слои облаков по родам. У каждого слоя своё покрытие и свои высоты.
+        // Слой облаков (m_cloudSlab*) охватывает все слои с ненулевым баллом.
+        StratusLayer m_stratus;
+        StratocumulusLayer m_stratocumulus;
+        CumulusLayer m_cumulus;
+
+        // Значения слоев для шейдера. Слоистые облака держатся ниже
+        // слоисто-кучевых: при пересечении слоистые опускаются.
+        void GetLayerParams(CloudLayerParams& stratus, CloudLayerParams& stratocumulus, CloudLayerParams& cumulus) const;
+        // Нижняя граница и толщина слоя облаков, км. Без активных слоев
+        // возвращает m_cloudSlabDistanceAboveSeaLevelKm и m_cloudSlabThicknessKm.
+        void GetEffectiveSlab(float& baseKm, float& thicknessKm) const;
+        // Необязательная RGBA-карта погоды. R: покрытие (0 - ясно, 0.5 - балл
+        // слоя, 1 - вдвое больше), B: доля толщины слоя, A: плотность
+        // (0.5 - плотность слоя).
         AZ::Data::Instance<AZ::RPI::Image> m_weatherMap; // DO NOT REFLECT
         // ******************* Weather Data End
         //////////////////////////////////////////////////////////////

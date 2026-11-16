@@ -38,6 +38,10 @@ namespace VolumetricClouds
     inline constexpr const char* EditorCloudTextureAssetComponentTypeId = "{354CE04D-5D9D-4194-8757-88AF7472DDAA}";
 
     inline constexpr const char* CloudMaterialPropertiesTypeId = "{515030BE-B95D-4A3D-87F4-F5249AF086AB}";
+    inline constexpr const char* CloudLayerAdvancedTypeId = "{BD9A568E-89BA-44D6-B1A4-675D95540FBF}";
+    inline constexpr const char* StratusLayerTypeId = "{2BE4A99F-20FB-4130-984C-07C7387E8BDF}";
+    inline constexpr const char* StratocumulusLayerTypeId = "{B98BAB4A-E943-4728-A1C7-5741E403C3B0}";
+    inline constexpr const char* CumulusLayerTypeId = "{28910D21-E60D-4B85-9FFF-78871B9B3BF8}";
     inline constexpr const char* CloudscapeShaderConstantDataTypeId = "{9940E82C-AD4D-418E-B98C-FDB89FFE4BA5}";
 
 

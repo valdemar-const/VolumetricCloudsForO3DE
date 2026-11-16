@@ -125,8 +125,12 @@ namespace VolumetricClouds
 
 
            m_shaderResourceGroup->SetConstant(m_planetRadiusKmIndex, static_cast<float>(m_shaderConstantData->m_planetRadiusKm));
-           m_shaderResourceGroup->SetConstant(m_cloudSlabDistanceAboveSeaLevelKmIndex,  m_shaderConstantData->m_cloudSlabDistanceAboveSeaLevelKm);
-           m_shaderResourceGroup->SetConstant(m_cloudSlabThicknessKmIndex, m_shaderConstantData->m_cloudSlabThicknessKm);
+           float slabBaseKm = 0.0f;
+           float slabThicknessKm = 1.0f;
+           m_shaderConstantData->GetEffectiveSlab(slabBaseKm, slabThicknessKm);
+           slabThicknessKm = AZStd::max(slabThicknessKm, 0.05f);
+           m_shaderResourceGroup->SetConstant(m_cloudSlabDistanceAboveSeaLevelKmIndex, slabBaseKm);
+           m_shaderResourceGroup->SetConstant(m_cloudSlabThicknessKmIndex, slabThicknessKm);
 
            AZ::Color sunColorAndIntensity = AZ::Color::CreateFromVector3AndFloat(m_shaderConstantData->m_sunColor, m_shaderConstantData->m_sunLightIntensity);
            m_shaderResourceGroup->SetConstant(m_sunColorAndIntensityIndex, sunColorAndIntensity);
@@ -149,8 +153,10 @@ namespace VolumetricClouds
            m_shaderResourceGroup->SetConstant(m_multipleScatteringABCIndex,  abc);
 
            m_shaderResourceGroup->SetConstant(m_weatherMapSizeKmIndex, m_shaderConstantData->m_weatherMapSizeKm);
-           m_shaderResourceGroup->SetConstant(m_globalCloudCoverageIndex, m_shaderConstantData->m_globalCloudCoverage);
-           m_shaderResourceGroup->SetConstant(m_globalCloudDensityIndex, m_shaderConstantData->m_globalCloudDensity);
+           // Без карты погоды шейдер получает белую системную текстуру и
+           // берёт покрытие из шума пятен.
+           const bool hasWeatherMap = static_cast<bool>(m_shaderConstantData->m_weatherMap);
+           m_shaderResourceGroup->SetConstant(m_weatherMapInfluenceIndex, hasWeatherMap ? 1.0f : 0.0f);
 
            AZ::Vector3 windDirection = m_shaderConstantData->m_windDirection;
            const float windDirectionLength = windDirection.GetLength();
@@ -161,18 +167,40 @@ namespace VolumetricClouds
            m_shaderResourceGroup->SetConstant(m_windDirectionIndex, windDirection);
            m_shaderResourceGroup->SetConstant(m_cloudTopOffsetKmIndex, m_shaderConstantData->m_cloudTopOffsetKm);
            m_shaderResourceGroup->SetConstant(m_cloudEdgeSharpnessIndex, m_shaderConstantData->m_cloudEdgeSharpness);
-           m_shaderResourceGroup->SetConstant(m_cloudTopVariationIndex, m_shaderConstantData->m_cloudTopVariation);
-           m_shaderResourceGroup->SetConstant(m_cloudBaseRoundnessIndex, m_shaderConstantData->m_cloudBaseRoundness);
-           const auto& d = *m_shaderConstantData;
-           m_shaderResourceGroup->SetConstant(m_cloudTypeShareIndex, AZ::Vector3(d.m_stratusShare, d.m_stratocumulusShare, d.m_cumulusShare));
-           m_shaderResourceGroup->SetConstant(m_cloudTypeBaseHeightIndex, AZ::Vector3(d.m_stratusBaseHeight, d.m_stratocumulusBaseHeight, d.m_cumulusBaseHeight));
-           m_shaderResourceGroup->SetConstant(m_cloudTypeTopHeightIndex, AZ::Vector3(d.m_stratusTopHeight, d.m_stratocumulusTopHeight, d.m_cumulusTopHeight));
+           // Шейдер работает с долями толщины слоя облаков, а настройки слоя
+           // типа заданы в км.
+           const auto setCloudLayer = [&](const CloudLayerParams& layer, AZ::RHI::ShaderInputNameIndex& layerIndex,
+               AZ::RHI::ShaderInputNameIndex& shapeIndex)
+           {
+               static constexpr float MaxBaseReliefKm = 0.5f;
+               const float cover = layer.IsActive() ? layer.m_cover : 0.0f;
+               const float reliefKm = layer.m_baseRelief * AZStd::min(MaxBaseReliefKm, 0.4f * layer.m_thicknessKm);
+               m_shaderResourceGroup->SetConstant(layerIndex, AZ::Vector4(
+                   (layer.m_baseKm - slabBaseKm) / slabThicknessKm,
+                   layer.m_thicknessKm / slabThicknessKm,
+                   cover,
+                   layer.m_density));
+               m_shaderResourceGroup->SetConstant(shapeIndex, AZ::Vector4(
+                   layer.m_topVariation,
+                   reliefKm / slabThicknessKm,
+                   layer.m_baseRelief,
+                   0.0f));
+           };
+           CloudLayerParams stratus;
+           CloudLayerParams stratocumulus;
+           CloudLayerParams cumulus;
+           m_shaderConstantData->GetLayerParams(stratus, stratocumulus, cumulus);
+           setCloudLayer(stratus, m_stratusLayerIndex, m_stratusShapeIndex);
+           setCloudLayer(stratocumulus, m_stratocumulusLayerIndex, m_stratocumulusShapeIndex);
+           setCloudLayer(cumulus, m_cumulusLayerIndex, m_cumulusShapeIndex);
            m_shaderResourceGroup->SetConstant(m_phaseBackLobeGIndex, m_shaderConstantData->m_cloudMaterialProperties.m_phaseBackLobeG);
            m_shaderResourceGroup->SetConstant(m_phaseBackLobeWeightIndex, m_shaderConstantData->m_cloudMaterialProperties.m_phaseBackLobeWeight);
 
            m_shaderResourceGroup->SetImage(m_lowFreqNoiseTextureImageIndex, m_shaderConstantData->m_lowFrequencyNoiseTexture);
            m_shaderResourceGroup->SetImage(m_highFreqNoiseTextureImageIndex, m_shaderConstantData->m_highFrequencyNoiseTexture);
-           m_shaderResourceGroup->SetImage(m_weatherMapImageIndex, m_shaderConstantData->m_weatherMap);
+           m_shaderResourceGroup->SetImage(m_weatherMapImageIndex, hasWeatherMap
+               ? m_shaderConstantData->m_weatherMap
+               : AZ::RPI::ImageSystemInterface::Get()->GetSystemImage(AZ::RPI::SystemImage::White));
 
            m_srgNeedsUpdate = false;
        }
@@ -189,10 +217,9 @@ namespace VolumetricClouds
 
     void CloudscapeComputePass::UpdateShaderConstantData(const CloudscapeShaderConstantData& shaderData)
     {
-        // If any of the textures is nullptr we disable this pass.
+        // Без текстур шума пасс выключают. Карта погоды необязательна.
         if (!shaderData.m_lowFrequencyNoiseTexture ||
-            !shaderData.m_highFrequencyNoiseTexture ||
-            !shaderData.m_weatherMap)
+            !shaderData.m_highFrequencyNoiseTexture)
         {
             m_shaderConstantData = nullptr;
             SetEnabled(false);

@@ -8,6 +8,9 @@
 #include <AzCore/Asset/AssetSerializer.h>
 #include <AzCore/Serialization/SerializeContext.h>
 #include <AzCore/Serialization/EditContext.h>
+#include <AzCore/std/algorithm.h>
+#include <AzCore/std/limits.h>
+#include <initializer_list>
 
 #include <VolumetricClouds/VolumetricCloudsTypeIds.h>
 #include "CloudscapeShaderConstantData.h"
@@ -18,9 +21,59 @@ namespace VolumetricClouds
     AZ_TYPE_INFO_WITH_NAME_IMPL(CloudscapeShaderConstantData, "VolumetricClouds::CloudscapeShaderConstantData", CloudscapeShaderConstantDataTypeId);
     AZ_RTTI_NO_TYPE_INFO_IMPL(CloudscapeShaderConstantData);
 
+    void CloudscapeShaderConstantData::GetLayerParams(CloudLayerParams& stratus, CloudLayerParams& stratocumulus, CloudLayerParams& cumulus) const
+    {
+        stratus = m_stratus.GetParams();
+        stratocumulus = m_stratocumulus.GetParams();
+        cumulus = m_cumulus.GetParams();
+
+        // Слоистые облака под слоисто-кучевыми: вершину слоистых держат на
+        // 50 м ниже основания слоисто-кучевых, сначала опуская основание,
+        // затем уменьшая толщину.
+        static constexpr float LayerGapKm = 0.05f;
+        static constexpr float MinThicknessKm = 0.05f;
+        if (stratus.IsActive() && stratocumulus.IsActive())
+        {
+            const float maxTopKm = stratocumulus.m_baseKm - LayerGapKm;
+            if (stratus.m_baseKm + stratus.m_thicknessKm > maxTopKm)
+            {
+                stratus.m_baseKm = AZStd::max(0.05f, maxTopKm - stratus.m_thicknessKm);
+                stratus.m_thicknessKm = AZStd::max(MinThicknessKm, maxTopKm - stratus.m_baseKm);
+            }
+        }
+    }
+
+    void CloudscapeShaderConstantData::GetEffectiveSlab(float& baseKm, float& thicknessKm) const
+    {
+        CloudLayerParams layers[3];
+        GetLayerParams(layers[0], layers[1], layers[2]);
+        float minKm = AZStd::numeric_limits<float>::max();
+        float maxKm = AZStd::numeric_limits<float>::lowest();
+        for (const CloudLayerParams& layer : layers)
+        {
+            if (layer.IsActive())
+            {
+                minKm = AZStd::min(minKm, layer.m_baseKm);
+                maxKm = AZStd::max(maxKm, layer.m_baseKm + layer.m_thicknessKm);
+            }
+        }
+        if (minKm > maxKm)
+        {
+            baseKm = m_cloudSlabDistanceAboveSeaLevelKm;
+            thicknessKm = m_cloudSlabThicknessKm;
+            return;
+        }
+        baseKm = minKm;
+        thicknessKm = maxKm - minKm;
+    }
+
     void CloudscapeShaderConstantData::Reflect(AZ::ReflectContext* context)
     {
         CloudMaterialProperties::Reflect(context);
+        CloudLayerAdvanced::Reflect(context);
+        StratusLayer::Reflect(context);
+        StratocumulusLayer::Reflect(context);
+        CumulusLayer::Reflect(context);
 
         if (auto serializeContext = azrtti_cast<AZ::SerializeContext*>(context))
         {
@@ -43,17 +96,9 @@ namespace VolumetricClouds
                 ->Field("WindDirection", &CloudscapeShaderConstantData::m_windDirection)
                 ->Field("CloudTopOffsetKm", &CloudscapeShaderConstantData::m_cloudTopOffsetKm)
                 ->Field("CloudEdgeSharpness", &CloudscapeShaderConstantData::m_cloudEdgeSharpness)
-                ->Field("CloudTopVariation", &CloudscapeShaderConstantData::m_cloudTopVariation)
-                ->Field("CloudBaseRoundness", &CloudscapeShaderConstantData::m_cloudBaseRoundness)
-                ->Field("StratusShare", &CloudscapeShaderConstantData::m_stratusShare)
-                ->Field("StratusBaseHeight", &CloudscapeShaderConstantData::m_stratusBaseHeight)
-                ->Field("StratusTopHeight", &CloudscapeShaderConstantData::m_stratusTopHeight)
-                ->Field("StratocumulusShare", &CloudscapeShaderConstantData::m_stratocumulusShare)
-                ->Field("StratocumulusBaseHeight", &CloudscapeShaderConstantData::m_stratocumulusBaseHeight)
-                ->Field("StratocumulusTopHeight", &CloudscapeShaderConstantData::m_stratocumulusTopHeight)
-                ->Field("CumulusShare", &CloudscapeShaderConstantData::m_cumulusShare)
-                ->Field("CumulusBaseHeight", &CloudscapeShaderConstantData::m_cumulusBaseHeight)
-                ->Field("CumulusTopHeight", &CloudscapeShaderConstantData::m_cumulusTopHeight)
+                ->Field("Stratus", &CloudscapeShaderConstantData::m_stratus)
+                ->Field("Stratocumulus", &CloudscapeShaderConstantData::m_stratocumulus)
+                ->Field("Cumulus", &CloudscapeShaderConstantData::m_cumulus)
                 ->Field("CloudMaterialProperties", &CloudscapeShaderConstantData::m_cloudMaterialProperties)
                 ;
 
@@ -64,32 +109,47 @@ namespace VolumetricClouds
                     ->ClassElement(AZ::Edit::ClassElements::EditorData, "")
                     ->Attribute(AZ::Edit::Attributes::AutoExpand, true)
                     ->Attribute(AZ::Edit::Attributes::Visibility, AZ::Edit::PropertyVisibility::Show)
-                    ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_uvwScale, "UVW Scale", "Used to scale world position XYZ when sampling the Noise Textures during ray marching.")
-                        ->Attribute(AZ::Edit::Attributes::Min, 0.0001)
-                        ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                    ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_maxMipLevels, "Max Mip Levels", "Maximum number of mip levels used during noise texture sampling.")
-                        ->Attribute(AZ::Edit::Attributes::Min, 1)
-                        ->Attribute(AZ::Edit::Attributes::Max, 10)
-                    ->ClassElement(AZ::Edit::ClassElements::Group, "Ray Marching Steps")
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_minRayMarchingSteps, "Min", "The shorter the ray marching distance, the ray marching steps will be closer to this minimum count.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 1)
-                            ->Attribute(AZ::Edit::Attributes::Max, 128)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_maxRayMarchingSteps, "Max", "The longest the ray marching distance, the ray marching steps will be closer to this maximum count.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 1)
-                            ->Attribute(AZ::Edit::Attributes::Max, 128)
-                    ->EndGroup()
-                    ->ClassElement(AZ::Edit::ClassElements::Group, "Planetary Data")
+                    ->ClassElement(AZ::Edit::ClassElements::Group, "Cloud Layers")
                     ->Attribute(AZ::Edit::Attributes::AutoExpand, true)
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_stratus, "Stratus", "Low uniform grey sheet. It always stays below the stratocumulus layer.")
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_stratocumulus, "Stratocumulus", "Low layer of flat lumpy cloud patches.")
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_cumulus, "Cumulus", "Separate clouds with dome tops.")
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_weatherMapSizeKm, "Weather Map Size", "Length of the weather map side in the world. Used only with a weather map.")
+                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
+                            ->Attribute(AZ::Edit::Attributes::Min, 1.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 100.0)
+                    ->EndGroup()
+                    ->ClassElement(AZ::Edit::ClassElements::Group, "Structure")
+                    ->Attribute(AZ::Edit::Attributes::AutoExpand, false)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudEdgeSharpness, "Cloud Edge Sharpness", "Narrows the density ramp at cloud edges. 1 gives wide semi-transparent fringes, 4 gives crisp cumulus edges.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 1.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 16.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_uvwScale, "UVW Scale", "Noise texture tiles per kilometre. Larger values give smaller cloud puffs.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.05)
+                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_windSpeedKmPerSec, "Wind Speed", "Clouds will appear to move at the speed of the wind.")
+                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km/s")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 0.1)
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_windDirection, "Wind Direction", "")
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudTopOffsetKm, "Cloud Top Shift Offset", "Proportionally pushes the top of the clouds along the wind direction by this distance.")
+                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
+                            ->Attribute(AZ::Edit::Attributes::Min, -5.0)
+                            ->Attribute(AZ::Edit::Attributes::Max, 5.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_maxMipLevels, "Max Mip Levels", "Maximum number of mip levels used during noise texture sampling.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 1)
+                            ->Attribute(AZ::Edit::Attributes::Max, 10)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_minRayMarchingSteps, "Min Ray Marching Steps", "The shorter the ray marching distance, the ray marching steps will be closer to this minimum count.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 1)
+                            ->Attribute(AZ::Edit::Attributes::Max, 128)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_maxRayMarchingSteps, "Max Ray Marching Steps", "The longest the ray marching distance, the ray marching steps will be closer to this maximum count.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 1)
+                            ->Attribute(AZ::Edit::Attributes::Max, 128)
                         ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_planetRadiusKm, "Planet Radius", "Defaults to Earth Radius = 6371[Km]")
                             ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudSlabDistanceAboveSeaLevelKm, "Cloud Slab Distance", "The distance, above sea level, where the cloud slab starts.")
-                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.5)
-                            ->Attribute(AZ::Edit::Attributes::Max, 10.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudSlabThicknessKm, "Cloud Slab Thickness", "The thickness, also known as depth, of the cloud slab.")
-                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.5)
-                            ->Attribute(AZ::Edit::Attributes::Max, 10.0)
+                    ->EndGroup()
+                    ->ClassElement(AZ::Edit::ClassElements::Group, "Lighting")
+                    ->Attribute(AZ::Edit::Attributes::AutoExpand, false)
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_sunLightIntensity, "Sun Light Intensity", "A scaling factor to the color of the sun light.")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 100.0)
@@ -97,69 +157,8 @@ namespace VolumetricClouds
                         ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_ambientLightIntensity, "Ambient Light Intensity", "A scaling factor to the color of the ambient light. It will be modulated by the Sun Light Intensity.")
                             ->Attribute(AZ::Edit::Attributes::Min, 0.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 10.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_cloudMaterialProperties, "Cloud Material Properties", "")
                     ->EndGroup()
-                    ->ClassElement(AZ::Edit::ClassElements::Group, "Weather Data")
-                    ->Attribute(AZ::Edit::Attributes::AutoExpand, true)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_weatherMapSizeKm, "Weather Map Size", "Length, in world dimensions, of the weather map.")
-                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
-                            ->Attribute(AZ::Edit::Attributes::Min, 1.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 100.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_globalCloudCoverage, "Cloud Coverage", "Global interpolation factor between Red channel (low coverage) and Green channel (high coverage).")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_globalCloudDensity, "Cloud Density", "Global cloud density modulator.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_windSpeedKmPerSec, "Wind Speed", "Clouds will appear to move at the speed of the wind.")
-                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km/s")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 10.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_windDirection, "Wind Direction", "")
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudTopOffsetKm, "Cloud Top Shift Offset", "Proportionally pushes the top of the clouds along the wind direction by this distance.")
-                            ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
-                            ->Attribute(AZ::Edit::Attributes::Min, -5.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 5.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudEdgeSharpness, "Cloud Edge Sharpness", "Narrows the density ramp at cloud edges. 1 gives wide semi-transparent fringes, 4 gives crisp cumulus edges.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 1.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 16.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudTopVariation, "Cloud Top Variation", "Spread of cloud top heights. 0 puts every top at the weather map peak height, 1 lowers some tops to a quarter of it.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cloudBaseRoundness, "Cloud Base Roundness", "0 gives a flat cloud base at one height, 1 gives a lumpy base that differs between neighbouring clouds.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                    ->EndGroup()
-                    ->ClassElement(AZ::Edit::ClassElements::Group, "Cloud Types")
-                        ->Attribute(AZ::Edit::Attributes::AutoExpand, true)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratusShare, "Stratus Share", "Relative share of the sky covered by stratus clouds. 0 disables this cloud type.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratusBaseHeight, "Stratus Base", "Base height of stratus clouds as a fraction of the cloud slab thickness.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratusTopHeight, "Stratus Top", "Top height of stratus clouds as a fraction of the cloud slab thickness.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratocumulusShare, "Stratocumulus Share", "Relative share of the sky covered by stratocumulus clouds. 0 disables this cloud type.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratocumulusBaseHeight, "Stratocumulus Base", "Base height of stratocumulus clouds as a fraction of the cloud slab thickness.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_stratocumulusTopHeight, "Stratocumulus Top", "Top height of stratocumulus clouds as a fraction of the cloud slab thickness.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cumulusShare, "Cumulus Share", "Relative share of the sky covered by cumulus clouds. 0 disables this cloud type.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cumulusBaseHeight, "Cumulus Base", "Base height of cumulus clouds as a fraction of the cloud slab thickness.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_cumulusTopHeight, "Cumulus Top", "Top height of cumulus clouds as a fraction of the cloud slab thickness.")
-                            ->Attribute(AZ::Edit::Attributes::Min, 0.0)
-                            ->Attribute(AZ::Edit::Attributes::Max, 1.0)
-                    ->EndGroup()
-                    ->DataElement(AZ::Edit::UIHandlers::Default, &CloudscapeShaderConstantData::m_cloudMaterialProperties, "Cloud Material Properties", "")
                     ;
             }
         }
@@ -185,17 +184,9 @@ namespace VolumetricClouds
                m_windDirection.IsClose(rhs.m_windDirection) &&
                AZ::IsClose(m_cloudTopOffsetKm, rhs.m_cloudTopOffsetKm) &&
                AZ::IsClose(m_cloudEdgeSharpness, rhs.m_cloudEdgeSharpness) &&
-               AZ::IsClose(m_cloudTopVariation, rhs.m_cloudTopVariation) &&
-               AZ::IsClose(m_cloudBaseRoundness, rhs.m_cloudBaseRoundness) &&
-               AZ::IsClose(m_stratusShare, rhs.m_stratusShare) &&
-               AZ::IsClose(m_stratusBaseHeight, rhs.m_stratusBaseHeight) &&
-               AZ::IsClose(m_stratusTopHeight, rhs.m_stratusTopHeight) &&
-               AZ::IsClose(m_stratocumulusShare, rhs.m_stratocumulusShare) &&
-               AZ::IsClose(m_stratocumulusBaseHeight, rhs.m_stratocumulusBaseHeight) &&
-               AZ::IsClose(m_stratocumulusTopHeight, rhs.m_stratocumulusTopHeight) &&
-               AZ::IsClose(m_cumulusShare, rhs.m_cumulusShare) &&
-               AZ::IsClose(m_cumulusBaseHeight, rhs.m_cumulusBaseHeight) &&
-               AZ::IsClose(m_cumulusTopHeight, rhs.m_cumulusTopHeight) &&
+               m_stratus == rhs.m_stratus &&
+               m_stratocumulus == rhs.m_stratocumulus &&
+               m_cumulus == rhs.m_cumulus &&
                (m_cloudMaterialProperties == rhs.m_cloudMaterialProperties)
                ;
     }

@@ -33,6 +33,8 @@ set(FILES
     Source/Renderer/CloudscapeFeatureProcessor.h
     Source/Renderer/CloudMaterialProperties.cpp
     Source/Renderer/CloudMaterialProperties.h
+    Source/Renderer/CloudLayers.cpp
+    Source/Renderer/CloudLayers.h
     Source/Renderer/CloudscapeShaderConstantData.cpp
     Source/Renderer/CloudscapeShaderConstantData.h
     Source/Renderer/Passes/CloudTextureComputePass.cpp

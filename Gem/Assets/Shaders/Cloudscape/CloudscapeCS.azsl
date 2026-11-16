@@ -102,8 +102,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     // Weather Data modulators
     [[pad_to(16)]]
     float m_weatherMapSizeKm;// = 60;
-    float m_globalCloudCoverage;// = 0.40;
-    float m_globalCloudDensity;// = 0.5;
+    // 1 - карта погоды задана, 0 - вместо неё белая текстура.
+    float m_weatherMapInfluence;
     float m_windSpeedKmPerSec; // Km/sec
     float3 m_windDirection;
     // Pushes the top of the clouds along the wind direction by this
@@ -111,15 +111,18 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     float m_cloudTopOffsetKm;
     // Во сколько раз сужен переход плотности на краю облака.
     float m_cloudEdgeSharpness;
-    // Разброс высоты вершин облаков, 0..1.
-    float m_cloudTopVariation;
-    // Скругление основания облаков, 0..1.
-    float m_cloudBaseRoundness;
-    // Доля, основание и вершина типов облаков: x - слоистые,
-    // y - слоисто-кучевые, z - кучевые.
-    float3 m_cloudTypeShare;
-    float3 m_cloudTypeBaseHeight;
-    float3 m_cloudTypeTopHeight;
+
+    // Слои типов облаков. Layer: x - основание, y - толщина (доли толщины
+    // слоя облаков), z - покрытие (0 - слой выключен), w - плотность.
+    // Shape: x - разброс вершин, y - амплитуда рельефа основания (доля
+    // толщины слоя облаков), z - рельеф основания 0..1.
+    [[pad_to(16)]]
+    float4 m_stratusLayer;
+    float4 m_stratusShape;
+    float4 m_stratocumulusLayer;
+    float4 m_stratocumulusShape;
+    float4 m_cumulusLayer;
+    float4 m_cumulusShape;
 
     Texture2D<float2> m_depthStencilTexture;
     Sampler ClampPointSampler
@@ -135,11 +138,8 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     Texture3D<float4> m_lowFreqNoiseTexture;
     Texture3D<float4> m_highFreqNoiseTexture;
 
-    // About the weather map:
-    // R: Low coverage map.
-    // G: High coverage map. Kicks in when m_globalCloudCoverage > 0.5.
-    // B: Peak height.
-    // A: density
+    // Карта погоды. R: покрытие (0.5 - балл слоя), B: доля толщины слоя,
+    // A: плотность (0.5 - плотность слоя).
     Texture2D<float4> m_weatherMap;
     Sampler WrapLinearSampler
     {
@@ -299,11 +299,130 @@ static float Remap(float value, float oldMin, float oldMax, float newMin, float 
 }
 
 
+// Отсчёты шумов в точке, общие для всех типов облаков.
+struct CloudNoiseSample
+{
+    float m_shape;
+    float m_topNoise;
+    // Шум клубов основания 0..1; 1 - клуб свисает до нижней границы слоя.
+    float m_relief;
+    float m_detailFBM;
+    // Сила эрозии детальным шумом; 0, если детальный шум не берут.
+    float m_detailStrength;
+    float m_weatherHeight;
+};
+
+// Постоянные характера типа облака.
+struct CloudTypeCharacter
+{
+    // Доля, на которую шум формы заменяют единицей: при большой доле
+    // слой сплошной, с редкими разрывами.
+    float m_noiseFlatten;
+    // Доля высоты облака, с которой начинается спад формы к вершине.
+    float m_topRampStart;
+    // Степень спада к вершине: при большой степени облако держит ширину
+    // почти до вершины (башня кучевого облака), при 2 сужается куполом.
+    float m_topExponent;
+    // Плотность у основания относительно плотности вершины.
+    float m_baseDensity;
+    // Шум пятен 0..1 и его вклад в покрытие: пятна разносят слои типов
+    // по разным участкам неба.
+    float m_patchNoise;
+    float m_patchContrast;
+    // Порог покрытия для доли неба под облаками 0, 0.05, 0.25, 0.5 (Lo)
+    // и 0.75, 0.9, 1 (Hi). Доля неба от порога растёт по крутой
+    // S-кривой; узлы сняты замером доли кадра под облаками при взгляде
+    // сверху вниз.
+    float4 m_coverageKnotsLo;
+    float3 m_coverageKnotsHi;
+};
+
+// Порог покрытия, при котором облака закрывают долю неба @fraction.
+float CoverageForFraction(float fraction, CloudTypeCharacter character)
+{
+    const float4 lo = character.m_coverageKnotsLo;
+    const float3 hi = character.m_coverageKnotsHi;
+    if (fraction < 0.05) return lerp(lo.x, lo.y, fraction / 0.05);
+    if (fraction < 0.25) return lerp(lo.y, lo.z, (fraction - 0.05) / 0.2);
+    if (fraction < 0.5) return lerp(lo.z, lo.w, (fraction - 0.25) / 0.25);
+    if (fraction < 0.75) return lerp(lo.w, hi.x, (fraction - 0.5) / 0.25);
+    if (fraction < 0.9) return lerp(hi.x, hi.y, (fraction - 0.75) / 0.15);
+    return lerp(hi.y, hi.z, saturate((fraction - 0.9) / 0.1));
+}
+
+// @param layer x - основание, y - толщина, z - покрытие, w - плотность.
+// @param shape x - разброс вершин, y - амплитуда рельефа основания,
+//        z - рельеф основания 0..1.
+float EvaluateCloudType(float heightFraction, float4 layer, float4 shape, CloudTypeCharacter character, CloudNoiseSample noise)
+{
+    const float base = layer.x;
+    const float thickness = layer.y;
+    if (layer.z <= 0.0 || heightFraction < base || heightFraction > base + thickness)
+    {
+        return 0.0;
+    }
+
+    // Клубы основания свисают вниз до основания слоя; между клубами
+    // основание поднято на амплитуду рельефа. Так низ облака при подлёте
+    // имеет вертикальный рельеф, а не плоский срез.
+    const float baseLocal = base + shape.y * (1.0 - noise.m_relief);
+    // Длинный подъём формы у основания вместе с порогом покрытия округляет
+    // низ: где шум формы сильнее, облако опускается ниже.
+    const float rampLength = thickness * lerp(0.04, 0.25, shape.z);
+    const float topScale = lerp(1.0, lerp(0.25, 1.0, saturate(Remap(noise.m_topNoise, 0.3, 0.8, 0.0, 1.0))), shape.x);
+    const float topLocal = max(base + thickness * noise.m_weatherHeight * topScale, baseLocal + rampLength + 0.01);
+    const float bottomRamp = saturate((heightFraction - baseLocal) / rampLength);
+    const float topRamp = saturate(Remap(heightFraction, lerp(baseLocal, topLocal, character.m_topRampStart), topLocal, 0.0, 1.0));
+    const float shapeAltering = bottomRamp * (1.0 - pow(topRamp, character.m_topExponent));
+    if (shapeAltering <= 0.0)
+    {
+        return 0.0;
+    }
+
+    // Шум пятен слабее при большом балле: при 8 октах разрывов в слое
+    // нет. Карта погоды задаёт пятна полностью.
+    const float cover = layer.z;
+    const float patchContrast = lerp(character.m_patchContrast * (1.0 - cover * cover), 1.0, PassSrg::m_weatherMapInfluence);
+    // Пятна меняют долю неба, а не порог: порог по доле растёт круто, и
+    // пятно на пороге давало бы скачок от ясного неба к сплошному слою.
+    const float fraction = saturate(cover * lerp(1.0, 2.0 * character.m_patchNoise, patchContrast));
+    if (fraction <= 0.0)
+    {
+        return 0.0;
+    }
+    const float coverage = CoverageForFraction(fraction, character);
+    const float shapeNoise = lerp(noise.m_shape, 1.0, character.m_noiseFlatten);
+    float result = saturate(Remap(shapeNoise * shapeAltering, 1.0 - coverage, 1.0, 0.0, 1.0));
+
+    // Высоту внутри облака считают от основания слоя, а не от клуба:
+    // иначе профиль плотности рвётся на верхней границе рельефа.
+    const float h = saturate((heightFraction - base) / max(topLocal - base, 1e-3));
+    if (noise.m_detailStrength > 0.0)
+    {
+        // У основания эрозия сильнее: низ облака рыхлый, с клочьями.
+        // Ближе к вершине деталь даёт клубы (Haggstrom 2018).
+        const float baseFluff = 1.0 + 1.5 * shape.z * (1.0 - saturate(h * 4.0));
+        const float erosion = noise.m_detailStrength * exp(-coverage * 0.75) * baseFluff * lerp(noise.m_detailFBM, 1.0 - noise.m_detailFBM, h);
+        result = saturate(Remap(result, erosion, 1.0, 0.0, 1.0));
+    }
+
+    // Плотность после Remap растёт от края линейно по значению шума, а шум
+    // меняется медленно: полупрозрачный край выходит шириной в сотни
+    // метров. Множитель m_cloudEdgeSharpness сужает переход.
+    const float densityProfile = lerp(character.m_baseDensity, 1.0, saturate(h * 2.0));
+    return saturate(result * max(PassSrg::m_cloudEdgeSharpness, 1.0)) * densityProfile * layer.w;
+}
+
 // @param heightFraction A value between 0.0 and 1.0. 0.0 means that @worldPosKm is exactly touching the
 //        inner sphere of the cloud slab, and 1.0 means that @worldPosKm is touching the outer sphere of the
 //        cloud slab.
 float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, float heightFraction, bool sampleHighFreqNoise)
 {
+    if (PassSrg::m_stratusLayer.z + PassSrg::m_stratocumulusLayer.z + PassSrg::m_cumulusLayer.z <= 0.0)
+    {
+        return 0.0;
+    }
+
     worldPosKm = PassSrg::ApplyWindEffect(worldPosKm, heightFraction);
 
     // This is very important when sampling the Texture3D. Even though
@@ -311,95 +430,69 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
     // because we endup sampling from very "distant" points within the Texture3D.
     // We need to normalize/scale the @worldPosKm into numbers closer to 0.0 and 1.0
     // for nicer/smoother sampling of the Texture3D.
-    const float3 wps= worldPosKm;// - float3(0, 0, PassSrg::m_planetRadiusKm + PassSrg::m_cloudSlabDistanceAboveSeaLevelKm);
-    float3 uvw = wps.xyz * uvwScale;
+    const float3 uvw = worldPosKm * uvwScale;
 
     const float4 lowFreqNoises = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, uvw, mipLevel);
     const float lowFreqFBM = lowFreqNoises.g * 0.625
                      + lowFreqNoises.b * 0.25
                      + lowFreqNoises.a * 0.125;
-    float shapeNoiseSample = Remap(lowFreqNoises.r,  lowFreqFBM - 1.0, 1.0, 0.0, 1.0);
 
-    //float cloudCoverage = weatherData.x;
-    ////Apply coverage.
-    ////float baseCloudWithCoverage = Remap(baseCloud, cloudCoverage, 1.0, 0.0, 1.0);
-    ////baseCloudWithCoverage *= cloudCoverage;
-//
-    ////float baseCloud = lowFreqNoises.r;
-    //float densityHeightGradient = GetDensityHeightGradient(worldPos, weatherData, atmosphereIntersectionPos);
-    //float baseCloudWithCoverage = baseCloud * densityHeightGradient * 1.0;
-//
-    //return baseCloudWithCoverage * cloudCoverage;
-
-    const float4 weatherData = PassSrg::GetWeatherData(worldPosKm);
-
-    // Тип облака выбирают по 2D шуму с ячейкой около 40 км: отрезок
-    // значений шума делят между типами пропорционально долям, на границах
-    // типы плавно смешивают. Тип с долей 0 не получает отрезка.
-    static const float TypeNoiseScalePerKm = 1.0 / 40.0;
-    static const float TypeBlend = 0.08;
-    const float3 typeShare = max(PassSrg::m_cloudTypeShare, 0.0);
-    const float typeShareSum = typeShare.x + typeShare.y + typeShare.z;
-    if (typeShareSum < 1e-4)
+    // Без карты погоды берут нейтральные значения: покрытие и плотность
+    // слоя без поправок, полная толщина слоя.
+    float4 weatherData = float4(0.5, 0.5, 1.0, 0.5);
+    if (PassSrg::m_weatherMapInfluence > 0.0)
     {
-        return 0.0;
+        weatherData = PassSrg::GetWeatherData(worldPosKm);
     }
-    const float typeNoise = saturate(Remap(PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
-        float3(worldPosKm.xy * TypeNoiseScalePerKm, 0.71), 3.0).b, 0.25, 0.75, 0.0, 1.0));
-    const float typeEdge0 = typeShare.x / typeShareSum;
-    const float typeEdge1 = (typeShare.x + typeShare.y) / typeShareSum;
-    float3 typeWeight;
-    typeWeight.x = 1.0 - smoothstep(typeEdge0 - TypeBlend, typeEdge0 + TypeBlend, typeNoise);
-    typeWeight.z = smoothstep(typeEdge1 - TypeBlend, typeEdge1 + TypeBlend, typeNoise);
-    typeWeight.y = saturate(1.0 - typeWeight.x - typeWeight.z);
-    typeWeight *= step(1e-4, typeShare);
-    typeWeight /= max(typeWeight.x + typeWeight.y + typeWeight.z, 1e-4);
-    const float typeBase = dot(typeWeight, saturate(PassSrg::m_cloudTypeBaseHeight));
-    const float typeTop = max(dot(typeWeight, saturate(PassSrg::m_cloudTypeTopHeight)), typeBase + 0.02);
 
-    // Вершину опускают по 2D шуму Уорли с ячейкой в несколько км: у
-    // соседних облаков разная высота, и верх слоя не выглядит ровным
-    // срезом. Канал B карты погоды задаёт верхний предел высоты.
+    CloudNoiseSample noise;
+    noise.m_shape = Remap(lowFreqNoises.r, lowFreqFBM - 1.0, 1.0, 0.0, 1.0);
+    noise.m_weatherHeight = weatherData.b;
+
+    // Вершины опускают по 2D шуму Уорли с ячейкой около 16 км: у соседних
+    // облаков разная высота, и верх слоя не выглядит ровным срезом.
     static const float TopNoiseScalePerKm = 1.0 / 16.0;
-    const float topNoise = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
+    noise.m_topNoise = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
         float3(worldPosKm.xy * TopNoiseScalePerKm, 0.37), 2.0).g;
 
-    // Основание сдвигают 3D шумом формы и 2D шумом вершин: соседние
-    // облака начинаются на разной высоте. Длинный линейный подъём формы
-    // у основания вместе с порогом покрытия даёт бугристый низ: где шум
-    // плотнее, облако опускается ниже. Короткий подъём даёт плоский срез.
-    const float baseRoundness = saturate(PassSrg::m_cloudBaseRoundness);
-    const float cloudThickness = typeTop - typeBase;
-    const float baseHeight = typeBase + baseRoundness * cloudThickness * (0.10 * lowFreqFBM + 0.08 * (1.0 - topNoise));
-    const float baseRampLength = cloudThickness * lerp(0.04, 0.2, baseRoundness);
-    float shapeRemapBottom = saturate(Remap(heightFraction, baseHeight, baseHeight + baseRampLength, 0.0, 1.0));
+    // Пятна типов облаков: 2D шум с ячейкой около 40 км, свой канал на
+    // каждый тип.
+    static const float PatchNoiseScalePerKm = 1.0 / 40.0;
+    // Шум пятен - разность двух отсчётов одного шума: у разности среднее
+    // ровно 0.5, и пятна не меняют средний балл слоя.
+    const float2 patchUv = worldPosKm.xy * PatchNoiseScalePerKm;
+    const float3 patchA = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, float3(patchUv, 0.71), 3.0).rbg;
+    const float3 patchB = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, float3(patchUv + float2(0.37, 0.61), 0.29), 3.0).rbg;
+    float3 patchNoise = saturate(0.5 + 1.5 * (patchA - patchB));
+    patchNoise = lerp(patchNoise, weatherData.rrr, PassSrg::m_weatherMapInfluence);
 
-    const float topScale = lerp(1.0, lerp(0.25, 1.0, saturate(Remap(topNoise, 0.3, 0.8, 0.0, 1.0))),
-        saturate(PassSrg::m_cloudTopVariation));
-    const float cloudMaxHeight = max(typeTop * weatherData.b * topScale, baseHeight + baseRampLength + 0.02);
-    // Квадратичный спад к вершине даёт купол: середина облака остаётся
-    // полной, форма сужается у самого верха.
-    const float topRamp = saturate(Remap(heightFraction, lerp(baseHeight, cloudMaxHeight, 0.2), cloudMaxHeight, 0.0, 1.0));
-    float shapeRemapTop = 1.0 - topRamp * topRamp;
-    float shapeAltering = shapeRemapBottom * shapeRemapTop;
+    // Шум клубов основания берут только у оснований слоев и только для
+    // полных отсчётов: выше основания он не влияет на форму, а отсчёты
+    // света 6 на каждый шаг марша. Без шума основание
+    // лежит на нижней границе слоя, и пропуск пустого воздуха не
+    // проскакивает облако.
+    noise.m_relief = 1.0;
+    const bool nearBase = sampleHighFreqNoise && (
+        (PassSrg::m_stratusLayer.z > 0.0 && heightFraction < PassSrg::m_stratusLayer.x + PassSrg::m_stratusShape.y + 0.25 * PassSrg::m_stratusLayer.y) ||
+        (PassSrg::m_stratocumulusLayer.z > 0.0 && heightFraction < PassSrg::m_stratocumulusLayer.x + PassSrg::m_stratocumulusShape.y + 0.25 * PassSrg::m_stratocumulusLayer.y) ||
+        (PassSrg::m_cumulusLayer.z > 0.0 && heightFraction < PassSrg::m_cumulusLayer.x + PassSrg::m_cumulusShape.y + 0.25 * PassSrg::m_cumulusLayer.y));
+    if (nearBase)
+    {
+        // Частота в 1.5 раза выше формы даёт клубы шириной около километра.
+        // Вклад FBM формы разносит высоту основания соседних облаков.
+        static const float ReliefFrequencyScale = 1.5;
+        const float reliefMipLevel = mipLevel + 1.6 * saturate(mipLevel);
+        const float reliefWorley = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
+            uvw * ReliefFrequencyScale, reliefMipLevel).g;
+        noise.m_relief = saturate((0.7 * reliefWorley + 0.3 * lowFreqFBM - 0.3) * 2.0);
+    }
 
-
-    // Плотность растёт от основания к вершине в 3 раза: основание рыхлое,
-    // вершина плотная (Schneider 2015). Множитель 0.1 исходного профиля
-    // давал ослабление около 1 км^-1, и облако выглядело туманом.
-    float densityRemapBottom = saturate(Remap(heightFraction, 0.0, 0.5, 0.35, 1.0));
-    float densityRemapTop = saturate(Remap(heightFraction, 0.9, 1.0, 1.0, 0.0));
-    const float wheaterMapDensity = weatherData.a;
-    float densityAlteration = PassSrg::m_globalCloudDensity * densityRemapBottom * densityRemapTop * wheaterMapDensity * 2.0;
-
-
-    float weatherMapCoverage = max(weatherData.r, saturate(PassSrg::m_globalCloudCoverage - 0.5) * weatherData.g * 2.00);
-
-    float result = saturate(Remap(shapeNoiseSample*shapeAltering, 1.0 - PassSrg::m_globalCloudCoverage*weatherMapCoverage, 1.0, 0.0, 1.0));
+    noise.m_detailFBM = 0.0;
+    noise.m_detailStrength = 0.0;
     if (sampleHighFreqNoise)
     {
         // FIXME: We sample "gba" instead of "rgba" because "r" channel contains perlin worley noise, and we only
-        // need the worley noise. 
+        // need the worley noise.
         // Детальный шум берут с частотой в 3 раза выше формы и сдвигают
         // каналами низкочастотного шума: сдвиг заменяет curl-шум и ломает
         // повтор детали вдоль границы облака.
@@ -410,28 +503,55 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
         // вдали шум даёт зерно. Вблизи камеры мип 0 сохраняет деталь.
         const float detailMipLevel = mipLevel + 1.6 * saturate(mipLevel);
         const float3 highFreqNoise = PassSrg::m_highFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, detailUvw, detailMipLevel).gba;
-        const float highFreqFBM = highFreqNoise.r * 0.625
+        noise.m_detailFBM = highFreqNoise.r * 0.625
                      + highFreqNoise.g * 0.25
                      + highFreqNoise.b * 0.125;
         // Per Haggstrom: The entire influence of the detail noise is reduced to be maximum 0.35,
-        // with exp(−gc×0.75) the influence is reduced with the global coverage,
-        // and the linear interpolation ensures that clouds are more
-        // fluffy towards the base and more billowy towards the peak.
+        // with exp(−gc×0.75) the influence is reduced with the coverage (see EvaluateCloudType).
         // Деталь мельче пикселя на дальних облаках только шумит, поэтому
         // её влияние убывает до нуля к половине максимального мипа.
         const float detailFade = saturate(1.0 - mipLevel / max(0.5 * float(PassSrg::m_maxMipLevels - 1), 1.0));
-        const float highFreqNoiseModified = detailFade * 0.35*exp(-PassSrg::m_globalCloudCoverage*0.75)*lerp(highFreqFBM, 1.0-highFreqFBM,saturate(heightFraction * 1.0));
-        //const float sampleNoiseNoDetail = saturate(Remap(shapeNoiseSample*shapeAltering, 1.0 - PassSrg::m_globalCloudCoverage*weatherMapCoverage, 1.0, 0.0, 1.0));
-        result = saturate(Remap(result, highFreqNoiseModified, 1, 0, 1));
+        noise.m_detailStrength = detailFade * 0.35;
     }
 
-    // Плотность после Remap растёт от края линейно по значению шума, а шум
-    // меняется медленно: полупрозрачный край выходит шириной в сотни
-    // метров. У кучевого облака граница капель резкая, край виден чётко.
-    // Множитель m_cloudEdgeSharpness сужает переход; 1 даёт исходный край.
-    return saturate(result * max(PassSrg::m_cloudEdgeSharpness, 1.0)) * densityAlteration;
-}
+    CloudTypeCharacter stratus;
+    stratus.m_noiseFlatten = 0.6;
+    stratus.m_topRampStart = 0.5;
+    stratus.m_topExponent = 2.0;
+    stratus.m_baseDensity = 0.8;
+    stratus.m_patchNoise = patchNoise.x;
+    stratus.m_patchContrast = 0.5;
+    stratus.m_coverageKnotsLo = float4(0.12, 0.132, 0.146, 0.156);
+    stratus.m_coverageKnotsHi = float3(0.1625, 0.1715, 0.2);
 
+    CloudTypeCharacter stratocumulus;
+    stratocumulus.m_noiseFlatten = 0.25;
+    stratocumulus.m_topRampStart = 0.35;
+    stratocumulus.m_topExponent = 2.0;
+    stratocumulus.m_baseDensity = 0.5;
+    stratocumulus.m_patchNoise = patchNoise.y;
+    stratocumulus.m_patchContrast = 0.6;
+    stratocumulus.m_coverageKnotsLo = float4(0.18, 0.2288, 0.2706, 0.2943);
+    stratocumulus.m_coverageKnotsHi = float3(0.3172, 0.3394, 0.39);
+
+    CloudTypeCharacter cumulus;
+    cumulus.m_noiseFlatten = 0.0;
+    cumulus.m_topRampStart = 0.45;
+    cumulus.m_topExponent = 3.0;
+    cumulus.m_baseDensity = 0.35;
+    cumulus.m_patchNoise = patchNoise.z;
+    cumulus.m_patchContrast = 0.4;
+    cumulus.m_coverageKnotsLo = float4(0.27, 0.318, 0.3567, 0.3846);
+    cumulus.m_coverageKnotsHi = float3(0.4132, 0.4388, 0.51);
+
+    // Слои складывают по максимуму: в месте перекрытия слоев плотность
+    // не удваивается.
+    float density = EvaluateCloudType(heightFraction, PassSrg::m_stratusLayer, PassSrg::m_stratusShape, stratus, noise);
+    density = max(density, EvaluateCloudType(heightFraction, PassSrg::m_stratocumulusLayer, PassSrg::m_stratocumulusShape, stratocumulus, noise));
+    density = max(density, EvaluateCloudType(heightFraction, PassSrg::m_cumulusLayer, PassSrg::m_cumulusShape, cumulus, noise));
+
+    return density * weatherData.a * 2.0;
+}
 
 // This function is based on three recommendations:
 // 1- From "Oz: The Great and Volumetric"
