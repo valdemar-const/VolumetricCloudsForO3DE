@@ -354,7 +354,10 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
         static const float DetailFrequencyScale = 3.0;
         static const float DetailDistortion = 0.15;
         const float3 detailUvw = uvw * DetailFrequencyScale + (lowFreqNoises.gba - 0.5) * DetailDistortion;
-        const float3 highFreqNoise = PassSrg::m_highFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, detailUvw, max(mipLevel - 0.5, 0.0)).gba;
+        // Частота в 3 раза выше требует мип на log2(3) = 1.6 выше, иначе
+        // вдали шум даёт зерно. Вблизи камеры мип 0 сохраняет деталь.
+        const float detailMipLevel = mipLevel + 1.6 * saturate(mipLevel);
+        const float3 highFreqNoise = PassSrg::m_highFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler, detailUvw, detailMipLevel).gba;
         const float highFreqFBM = highFreqNoise.r * 0.625
                      + highFreqNoise.g * 0.25
                      + highFreqNoise.b * 0.125;
@@ -362,7 +365,10 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
         // with exp(−gc×0.75) the influence is reduced with the global coverage,
         // and the linear interpolation ensures that clouds are more
         // fluffy towards the base and more billowy towards the peak.
-        const float highFreqNoiseModified = 0.35*exp(-PassSrg::m_globalCloudCoverage*0.75)*lerp(highFreqFBM, 1.0-highFreqFBM,saturate(heightFraction * 1.0));
+        // Деталь мельче пикселя на дальних облаках только шумит, поэтому
+        // её влияние убывает до нуля к половине максимального мипа.
+        const float detailFade = saturate(1.0 - mipLevel / max(0.5 * float(PassSrg::m_maxMipLevels - 1), 1.0));
+        const float highFreqNoiseModified = detailFade * 0.35*exp(-PassSrg::m_globalCloudCoverage*0.75)*lerp(highFreqFBM, 1.0-highFreqFBM,saturate(heightFraction * 1.0));
         //const float sampleNoiseNoDetail = saturate(Remap(shapeNoiseSample*shapeAltering, 1.0 - PassSrg::m_globalCloudCoverage*weatherMapCoverage, 1.0, 0.0, 1.0));
         result = saturate(Remap(result, highFreqNoiseModified, 1, 0, 1));
     }
