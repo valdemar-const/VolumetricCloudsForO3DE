@@ -269,6 +269,10 @@ ShaderResourceGroup PassSrg : SRG_PerPass
         // Calculate henyeyGreenstein, which needs the cosine of the angle between the view and the
         // direction towards the sun light.
         const float cosAngle = dot(m_directionTowardsTheSun, viewDirection);
+        // При g = 1 в направлении солнца числитель и знаменатель равны 0, и
+        // фаза даёт NaN: пиксель диска солнца становится чёрным. Предел 0.99
+        // оставляет пик фазы конечным.
+        g = clamp(g, -0.99, 0.99);
         const float g2 = g * g;
         #define INV_4PI (1.0/(4*3.141590))
         // FIXME/TODO: Do Schlick approximation.
