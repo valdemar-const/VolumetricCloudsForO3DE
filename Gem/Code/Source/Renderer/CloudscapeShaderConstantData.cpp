@@ -96,6 +96,8 @@ namespace VolumetricClouds
                 ->Field("WindDirection", &CloudscapeShaderConstantData::m_windDirection)
                 ->Field("CloudTopOffsetKm", &CloudscapeShaderConstantData::m_cloudTopOffsetKm)
                 ->Field("CloudEdgeSharpness", &CloudscapeShaderConstantData::m_cloudEdgeSharpness)
+                ->Field("OvercastStartOktas", &CloudscapeShaderConstantData::m_overcastStartOktas)
+                ->Field("OvercastCurve", &CloudscapeShaderConstantData::m_overcastCurve)
                 ->Field("Stratus", &CloudscapeShaderConstantData::m_stratus)
                 ->Field("Stratocumulus", &CloudscapeShaderConstantData::m_stratocumulus)
                 ->Field("Cumulus", &CloudscapeShaderConstantData::m_cumulus)
@@ -118,6 +120,17 @@ namespace VolumetricClouds
                             ->Attribute(AZ::Edit::Attributes::Suffix, " Km")
                             ->Attribute(AZ::Edit::Attributes::Min, 1.0)
                             ->Attribute(AZ::Edit::Attributes::Max, 100.0)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_overcastStartOktas, "Overcast Start", "Cover value in oktas where the haze fill of gaps begins. The ramp ends at full cover.")
+                            ->Attribute(AZ::Edit::Attributes::Suffix, " oktas")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.0f)
+                            ->Attribute(AZ::Edit::Attributes::Max, 8.0f)
+                            ->Attribute(AZ::Edit::Attributes::Step, 0.01f)
+                            ->Attribute(AZ::Edit::Attributes::Decimals, 2)
+                        ->DataElement(AZ::Edit::UIHandlers::Slider, &CloudscapeShaderConstantData::m_overcastCurve, "Overcast Curve", "Shape of the fill ramp. 1 is linear. Above 1 the fill starts slow and finishes fast, below 1 the opposite.")
+                            ->Attribute(AZ::Edit::Attributes::Min, 0.1f)
+                            ->Attribute(AZ::Edit::Attributes::Max, 4.0f)
+                            ->Attribute(AZ::Edit::Attributes::Step, 0.01f)
+                            ->Attribute(AZ::Edit::Attributes::Decimals, 2)
                     ->EndGroup()
                     ->ClassElement(AZ::Edit::ClassElements::Group, "Structure")
                     ->Attribute(AZ::Edit::Attributes::AutoExpand, false)
@@ -184,6 +197,8 @@ namespace VolumetricClouds
                m_windDirection.IsClose(rhs.m_windDirection) &&
                AZ::IsClose(m_cloudTopOffsetKm, rhs.m_cloudTopOffsetKm) &&
                AZ::IsClose(m_cloudEdgeSharpness, rhs.m_cloudEdgeSharpness) &&
+               AZ::IsClose(m_overcastStartOktas, rhs.m_overcastStartOktas) &&
+               AZ::IsClose(m_overcastCurve, rhs.m_overcastCurve) &&
                m_stratus == rhs.m_stratus &&
                m_stratocumulus == rhs.m_stratocumulus &&
                m_cumulus == rhs.m_cumulus &&

@@ -51,8 +51,8 @@ namespace VolumetricClouds
                 ->Attribute(AZ::Edit::Attributes::Suffix, " oktas")
                 ->Attribute(AZ::Edit::Attributes::Min, 0.0f)
                 ->Attribute(AZ::Edit::Attributes::Max, maxOktas)
-                ->Attribute(AZ::Edit::Attributes::Step, 0.5f)
-                ->Attribute(AZ::Edit::Attributes::Decimals, 1);
+                ->Attribute(AZ::Edit::Attributes::Step, 0.01f)
+                ->Attribute(AZ::Edit::Attributes::Decimals, 2);
         }
 
         template<typename Layer>

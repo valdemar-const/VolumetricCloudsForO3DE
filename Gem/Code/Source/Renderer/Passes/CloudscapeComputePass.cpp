@@ -167,6 +167,8 @@ namespace VolumetricClouds
            m_shaderResourceGroup->SetConstant(m_windDirectionIndex, windDirection);
            m_shaderResourceGroup->SetConstant(m_cloudTopOffsetKmIndex, m_shaderConstantData->m_cloudTopOffsetKm);
            m_shaderResourceGroup->SetConstant(m_cloudEdgeSharpnessIndex, m_shaderConstantData->m_cloudEdgeSharpness);
+            m_shaderResourceGroup->SetConstant(m_overcastStartOktasIndex, m_shaderConstantData->m_overcastStartOktas);
+            m_shaderResourceGroup->SetConstant(m_overcastCurveIndex, m_shaderConstantData->m_overcastCurve);
            // Шейдер работает с долями толщины слоя облаков, а настройки слоя
            // типа заданы в км.
            const auto setCloudLayer = [&](const CloudLayerParams& layer, AZ::RHI::ShaderInputNameIndex& layerIndex,

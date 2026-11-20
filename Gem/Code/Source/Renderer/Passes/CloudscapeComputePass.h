@@ -93,6 +93,8 @@ namespace VolumetricClouds
         AZ::RHI::ShaderInputNameIndex m_windDirectionIndex = "m_windDirection";
         AZ::RHI::ShaderInputNameIndex m_cloudTopOffsetKmIndex = "m_cloudTopOffsetKm";
         AZ::RHI::ShaderInputNameIndex m_cloudEdgeSharpnessIndex = "m_cloudEdgeSharpness";
+        AZ::RHI::ShaderInputNameIndex m_overcastStartOktasIndex = "m_overcastStartOktas";
+        AZ::RHI::ShaderInputNameIndex m_overcastCurveIndex = "m_overcastCurve";
         AZ::RHI::ShaderInputNameIndex m_stratusLayerIndex = "m_stratusLayer";
         AZ::RHI::ShaderInputNameIndex m_stratusShapeIndex = "m_stratusShape";
         AZ::RHI::ShaderInputNameIndex m_stratocumulusLayerIndex = "m_stratocumulusLayer";

@@ -111,6 +111,10 @@ ShaderResourceGroup PassSrg : SRG_PerPass
     float m_cloudTopOffsetKm;
     // Во сколько раз сужен переход плотности на краю облака.
     float m_cloudEdgeSharpness;
+    // Пасмурный режим: балл начала затягивания просветов дымкой и степень
+    // кривой нарастания. 1 - линейная рампа.
+    float m_overcastStartOktas;
+    float m_overcastCurve;
 
     // Слои типов облаков. Layer: x - основание, y - толщина (доли толщины
     // слоя облаков), z - покрытие (0 - слой выключен), w - плотность.
@@ -392,21 +396,21 @@ float EvaluateCloudType(float heightFraction, float4 layer, float4 shape, CloudT
     const float patchContrast = lerp(character.m_patchContrast * (1.0 - cover * cover), 1.0, PassSrg::m_weatherMapInfluence);
     // Пятна меняют долю неба, а не порог: порог по доле растёт круто, и
     // пятно на пороге давало бы скачок от ясного неба к сплошному слою.
-    // Порог по доле неба при 8 октах оставляет просветы там, где шум формы
-    // или карта погоды слабы. Пасмурный режим поднимает порог до 1 и задаёт
-    // нижнюю границу плотности: пелена закрывает всё небо, подошва плотная.
-    // Балл 8 по определению не оставляет просветов, поэтому режим
-    // перекрывает и пятна карты погоды.
-    const float overcast = character.m_overcast * saturate((cover - 0.875) / 0.125);
+    // Рампу заволакивания задаёт пилот: балл начала и степень кривой.
+    // Долю неба рампа доводит до 1: карта погоды и пятна к 8 октам
+    // просветов не оставляют, а точные узлы порога дают плавный рост доли
+    // неба между баллами.
+    const float rampStart = PassSrg::m_overcastStartOktas / 8.0;
+    const float overcast = character.m_overcast *
+        pow(saturate((cover - rampStart) / max(1.0 - rampStart, 0.001)), max(PassSrg::m_overcastCurve, 0.05));
     const float fraction = lerp(saturate(cover * lerp(1.0, 2.0 * character.m_patchNoise, patchContrast)), 1.0, overcast);
     if (fraction <= 0.0)
     {
         return 0.0;
     }
-    const float coverage = lerp(CoverageForFraction(fraction, character), 1.0, overcast);
-    const float shapeNoise = lerp(noise.m_shape, 1.0, lerp(character.m_noiseFlatten, 0.85, overcast));
+    const float coverage = CoverageForFraction(fraction, character);
+    const float shapeNoise = lerp(noise.m_shape, 1.0, character.m_noiseFlatten);
     float result = saturate(Remap(shapeNoise * shapeAltering, 1.0 - coverage, 1.0, 0.0, 1.0));
-    result = max(result, overcast * 0.5 * shapeAltering);
 
     // Высоту внутри облака считают от основания слоя, а не от клуба:
     // иначе профиль плотности рвётся на верхней границе рельефа.
@@ -451,12 +455,29 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
                      + lowFreqNoises.b * 0.25
                      + lowFreqNoises.a * 0.125;
 
-    // Без карты погоды берут нейтральные значения: покрытие и плотность
-    // слоя без поправок, полная толщина слоя.
-    float4 weatherData = float4(0.5, 0.5, 1.0, 0.5);
+    // Толщину и плотность пелены задаёт погода: карта погоды или, без
+    // карты, крупный 2D шум из той же текстуры. Ячейка около 110 км -
+    // масштаб мезомасштабной изменчивости настоящей пасмурности: пелена
+    // то толще, то тоньше, и свет солнца рассеивается по-разному.
+    // Покрытие шум не трогает: им управляет балл слоя.
+    float4 weatherData;
     if (PassSrg::m_weatherMapInfluence > 0.0)
     {
         weatherData = PassSrg::GetWeatherData(worldPosKm);
+    }
+    else
+    {
+        static const float WeatherNoiseScalePerKm = 1.0 / 110.0;
+        const float2 weatherUv = worldPosKm.xy * WeatherNoiseScalePerKm;
+        const float thicknessNoise = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
+            float3(weatherUv, 0.53), 3.0).g;
+        const float densityNoise = PassSrg::m_lowFreqNoiseTexture.SampleLevel(PassSrg::WrapLinearSampler,
+            float3(weatherUv * 2.7 + float2(0.41, 0.77), 0.19), 3.0).r;
+        weatherData = float4(
+            0.5,
+            0.5,
+            saturate(0.7 + 0.6 * thicknessNoise),
+            saturate(0.5 + 0.45 * (densityNoise - 0.5)));
     }
 
     CloudNoiseSample noise;
@@ -535,8 +556,8 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
     stratus.m_baseDensity = 0.8;
     stratus.m_patchNoise = patchNoise.x;
     stratus.m_patchContrast = 0.5;
-    stratus.m_coverageKnotsLo = float4(0.12, 0.132, 0.146, 0.156);
-    stratus.m_coverageKnotsHi = float3(0.1625, 0.1715, 0.2);
+    stratus.m_coverageKnotsLo = float4(0.05, 0.131, 0.145, 0.154);
+    stratus.m_coverageKnotsHi = float3(0.164, 0.173, 0.25);
     stratus.m_overcast = 1.0;
 
     CloudTypeCharacter stratocumulus;
@@ -546,8 +567,8 @@ float SampleCloudDensity(float3 worldPosKm, float uvwScale, float mipLevel, floa
     stratocumulus.m_baseDensity = 0.5;
     stratocumulus.m_patchNoise = patchNoise.y;
     stratocumulus.m_patchContrast = 0.6;
-    stratocumulus.m_coverageKnotsLo = float4(0.18, 0.2288, 0.2706, 0.2943);
-    stratocumulus.m_coverageKnotsHi = float3(0.3172, 0.3394, 0.39);
+    stratocumulus.m_coverageKnotsLo = float4(0.05, 0.23, 0.258, 0.292);
+    stratocumulus.m_coverageKnotsHi = float3(0.317, 0.339, 0.45);
     stratocumulus.m_overcast = 1.0;
 
     CloudTypeCharacter cumulus;
